@@ -1,0 +1,15 @@
+#!/bin/bash
+
+#PBS -q sm
+#PBS -N run_write_vtk
+#PBS -l select=1:ncpus=28:ompthreads=1
+#PBS -l walltime=120:00:00
+
+# Connect to project directory in imaging folder
+cd /storage2/unipd/vanderbeek/cascadia_rjmcmc
+
+# Run Julia code (note 1 argument passed)
+OPTS=' -O3 --check-bounds=no'
+echo "start ---- $(date +%Y%m%d_%H%M%S)"
+julia $OPTS write_iso_rjmcmc_to_vtk.jl cas_iso_ref_20km # (project name)
+echo "stop ----- $(date +%Y%m%d_%H%M%S)"

@@ -1,0 +1,18 @@
+#!/bin/bash
+
+#PBS -q sm
+#PBS -N run_build_input
+#PBS -l select=1:ncpus=28:ompthreads=28
+#PBS -l walltime=180:00:00
+
+# Define path to local TauP jar-file (if you want to use a version outside of TauP.jl package)
+# export TAUP_JAR=/Users/bvanderbeek/research/software/TauP_Toolkit/TauP-2.7.0-SNAPSHOT5/lib/TauP-2.7.0-SNAPSHOT5.jar
+# Connect to project directory in imaging folder
+cd /storage2/unipd/vanderbeek/cascadia_rjmcmc
+
+# Run Julia code
+OPTS=' -O3 --check-bounds=no'
+echo "start ---- $(date +%Y%m%d_%H%M%S)"
+julia $OPTS buildIP.jl
+echo "stop ----- $(date +%Y%m%d_%H%M%S)"
+
