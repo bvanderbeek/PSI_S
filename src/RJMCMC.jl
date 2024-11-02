@@ -1,3 +1,4 @@
+
 function vereornox(rays,rnodes)
     vnox = zeros(Float64,14,length(rnodes.n2r))
     vnox[1:4,:] .= rnodes.c
@@ -32,6 +33,117 @@ function vereornox(rays,rnodes)
     end
     rays_outdom = SharedArray(rays_outdom)
     return vnox, nodes2rays, rays2nodes, rays_outdom
+end
+
+
+# This function is intended to deprecate run_RJMCMC
+function run_psi_s(parameter_file::String, ichunk)
+    # Assumes that chunks are run serially and chunk 1 saves the IPConst file
+    tf_save = ichunk > 1 ? false : true
+    P, _, IP_fields, IP, rnodes, rays, evtsta, observables, LocalRaysManager = build_inputs(parameter_file; tf_save = true, tf_serial = false)
+    run_psi_s(ichunk, P, IP_fields, IP, rnodes, rays, evtsta, observables, LocalRaysManager)
+    return nothing
+end
+function run_psi_s(ichunk, P::Dict, IP_fields::Vector{fieldinfo}, IP::IPConst, rnodes, rays, evtsta, observables, LocalRaysManager)
+
+    run_directory = P["out_directory"]*"/"*P["run_id"]
+    mkpath(run_directory) # Make output path if it doesn't exist
+    nchains = IP.MCS.nchains # -- number of gianMarkov chains
+
+    @time vnox,nodes2rays,rays2nodes,rays_outdom = vereornox(rays,rnodes)
+
+    # -- divides iterations in sub-samples; accounts for parallel tempering and ray-tracing
+    sub_samples, PT_samples = 1, 1
+    iterations = IP.MCS.niterations
+    if LocalRaysManager.status 
+        sub_samples = floor(Int64, IP.MCS.niterations / LocalRaysManager.sub_its)
+        if sub_samples == 0
+            sub_samples = 1
+        else        
+            iterations = LocalRaysManager.sub_its
+        end
+    end
+    if IP.PT.status
+        PT_samples = floor(Int64, iterations / IP.PT.intsw_its)
+        iterations = IP.PT.intsw_its
+    end
+
+    # -- generalized inverse matrices for static inversions and PT utilities
+    Gg,Gt = static_generalized_inverse(IP,observables)
+    if Gt' == zeros(Float64,1,1)
+        statics_status = false
+        print("\nno static corrections\n")
+    else
+        statics_status = true
+    end
+    temperatures = Float64[]
+    temp_ind = Int64[]
+    obs_lengths = Int64[]
+    obs_noise = zeros(Float64,nchains,length(observables.Obs))
+
+    # -- distributed arrays for parallel chains
+    @time ObjsInChains, MarkovChains = initialize_parallel_chains(IP,IP_fields,rnodes,evtsta,observables,rays,Gg,Gt,nchains,vnox,nodes2rays,rays2nodes,rays_outdom)
+    # -- tempered utilities
+    [push!(temperatures,ObjsInChains[n].model.T[1]) for n in eachindex(ObjsInChains)]
+    [push!(temp_ind,i) for i in eachindex(temperatures)]
+    [push!(obs_lengths,length(obs.obsval)) for obs in ObjsInChains[begin].observables.Obs]
+    for i in eachindex(ObjsInChains)
+        [obs_noise[i,j] = ObjsInChains[i].model.dataspace.Obs[j].noise[1] for j in eachindex(ObjsInChains[i].model.dataspace.Obs)]
+    end
+    temperatures = SharedArray(temperatures)
+    temp_ind = SharedArray(temp_ind)
+    T_misfits = SharedArray(zeros(Float64,nchains))
+    obs_lengths = SharedArray(obs_lengths)
+    obs_noise = SharedArray(obs_noise)
+
+    IP.PT.status && print("\ntemperatures: ",temperatures)
+    TMatrix = zeros(Float64,nchains,nchains)
+    DMatrix = zeros(Float64,nchains,nchains) 
+
+    actions = [1,2,3,4]
+    if (IP.MCS.hierarchical == true)
+		push!(actions,5)
+	end
+    fields = Int64[]
+    for i in eachindex(MarkovChains[1][end].fields)
+        push!(fields,i)
+    end
+    actions, fields = SharedArray(actions), SharedArray(fields)
+
+    for ii in 1:sub_samples
+        for jj in 1:PT_samples
+            it0 = (ii-1)*LocalRaysManager.sub_its + (jj-1)*IP.PT.intsw_its + 1
+            @sync @distributed for chain in 1:nchains
+                ObjsInChain, MarkovChain = localpart(ObjsInChains)[1], localpart(MarkovChains)[1]
+                ObjsInChain.model.T[1] = temperatures[chain]
+                (nchains == 1) && (chain = ichunk)
+                RJMCMC(ObjsInChain, MarkovChain, vnox, nodes2rays, rays2nodes, rays_outdom, IP, chain, iterations; it0=it0, actions=actions, fields=fields, statics_status=statics_status)
+                T_misfits[chain] = ObjsInChain.model.misfit[1]
+                [obs_noise[chain,j] = ObjsInChain.model.dataspace.Obs[j].noise[1] for j in eachindex(ObjsInChain.model.dataspace.Obs)]
+            end
+            if IP.PT.status && ((it0 + iterations) >= IP.PT.pt_pause)
+               @time parallel_tempering(T_misfits,obs_lengths,obs_noise,temperatures,temp_ind,nchains,TMatrix,DMatrix)
+            end 
+	    end
+        if LocalRaysManager.status && (ii < sub_samples)
+            rnodes = raytracing(rays,LocalRaysManager,MarkovChains,observables,evtsta,IP;it=ii)
+            vnox,nodes2rays,rays2nodes,rays_outdom = vereornox(rays,rnodes)
+            reinitialize_models(ObjsInChains,rnodes,rays,observables,Gg,Gt,IP,nchains,vnox,nodes2rays,rays2nodes,rays_outdom)
+        end
+    end
+
+    for chain in 1:nchains
+        MarkovChain = MarkovChains[chain]
+        chain = nchains * (ichunk-1) + chain
+        (nchains == 1) && (chain = ichunk)
+        save(string(run_directory, "/chain.", chain, ".jld"), "MarkovChain", MarkovChain)
+    end
+
+    @. TMatrix = TMatrix / DMatrix
+
+    save(string(run_directory, "/psi_s_utilities.jld"), "rnodes", rnodes,"observables",observables,"TransitionMatrix",TMatrix)
+
+    return nothing
 end
 
 function run_RJMCMC(wrk_dir, name, chain_id)

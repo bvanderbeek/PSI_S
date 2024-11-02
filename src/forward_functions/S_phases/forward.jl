@@ -66,6 +66,25 @@ function c_S_dlnVp_Vp2Vs(raytmp,nray,vnox,rays2nodes,dlnVp,Vp2Vs)
     end
 end
 
+# -- S-wave isotropic travel time with relative perturbation dlnVp and ratio dlnVs/dlnVp
+function tt_S_dlnVp_r(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs) 
+    dlnVp = get_field("dlnVp",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    r = get_field("r",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    c_S_dlnVp_r(raytmp,nray,vnox,rays2nodes,dlnVp,r)
+    average_velocity(raytmp,rays2nodes,nray)
+    for (i,j) in enumerate(rays2nodes[1,nray]:rays2nodes[2,nray]-1)
+        raytmp.dt[i] = vnox[11,j] * raytmp.u_path[i]
+    end
+    pred[obs.ray2obs[nray]] = sum(raytmp.dt)  - obs.ref_t[obs.ray2obs[nray]]
+end
+function c_S_dlnVp_r(raytmp,nray,vnox,rays2nodes,dlnVp,r)
+    v_1D_P = @view vnox[6,rays2nodes[1,nray]:rays2nodes[2,nray]]
+    v_1D_S = @view vnox[7,rays2nodes[1,nray]:rays2nodes[2,nray]]
+    @inbounds for i in eachindex(dlnVp)
+        raytmp.u[i] = 1.0/((1.0 + dlnVp[i]*r[i])*v_1D_S[i])
+    end
+end
+
 # -- S-wave isotropic travel time with relative perturbation dlnVs and hexagonal anisotropy (spherical)
 function tt_S_dlnVs_fsh_psi_gamma(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
     dlnVs = get_field("dlnVs",raytmp.fields,rays2nodes,rays_outdom,nray,model)

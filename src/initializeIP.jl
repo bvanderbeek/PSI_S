@@ -1,7 +1,62 @@
 # This project has been developed with the idea that every user should be able to implement 
 # observations and models of interest (compatible with the seismological core of this code), without modifying
 # the inner parts of this package. Here is the factory that builds all the objects needed keeping 
-# some generality in the approach and leaving space for future developments. 
+# some generality in the approach and leaving space for future developments.
+
+function build_obslist(B)
+    # Add observations
+    IP_obs = Vector{obsinfo}()
+    for D in B # Loop over datasets to fit
+        add_obs(IP_obs, D["type"], D["file"], D["tf_event_demean"], D["tf_event_statics"],
+            D["tf_station_statics"], D["data_uncertainty"], D["forward_function"])
+    end
+    return IP_obs
+end
+
+function build_fieldslist(F)
+    # Add parameter fields
+    IP_fields = Vector{fieldinfo}()
+    for D in F # Loop over parameter fields to estimate
+        add_field(IP_fields, D["field"], D["prior"], D["pdf_parameters"], D["lat_lims"],
+            D["lon_lims"], D["elv_lims"], D["time_lims"], D["extrap_value"])
+    end
+    return IP_fields 
+end
+
+function build_inputs(parameter_file::String; tf_save = false, tf_serial = false)
+    # Load parameter file
+    P = TOML.parsefile(parameter_file)
+    if tf_serial
+        # For serial calculations we run 1 chain at a time
+        num_chains = P["MonteCarloSolver"]["num_chains"]*P["MonteCarloSolver"]["num_chunks"]
+        P["MonteCarloSolver"]["num_chains"] = 1
+        P["MonteCarloSolver"]["num_chunks"] = num_chains
+    end
+    # Build inputs
+    IP_obs = build_obslist(P["DataFields"])
+    IP_fields = build_fieldslist(P["ParameterFields"])
+    IP = IPConst(P)
+    rnodes, rays, evtsta, observables, LocalRaysManager = initialize_IP(IP, IP_obs, IP_fields)
+    # Save inputs
+    if tf_save
+        # Make output directory
+        run_directory = P["out_directory"]*"/"*P["run_id"]
+        mkpath(run_directory)
+        # Save copy of parameter file
+        cp(parameter_file, run_directory*"/parameters.toml")
+        save(
+            string(run_directory, "/IPConst.jld"), "IP", IP,
+            "IP_fields", IP_fields,
+            "rnodes", rnodes,
+            "rays", rays,
+            "evtsta", evtsta,
+            "observables", observables,
+            "LocalRaysManager", LocalRaysManager
+        )
+    end
+
+    return P, IP_obs, IP_fields, IP, rnodes, rays, evtsta, observables, LocalRaysManager
+end
 
 # -- this script creates the setup for the inverse problem (IP).
 function initialize_IP(IP, IP_obs, IP_fields)

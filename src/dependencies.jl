@@ -16,6 +16,11 @@ using SharedArrays
 using MiniQhull
 using LinearAlgebra
 using SparseArrays
+using TOML
+# Post-processing
+using LazyArrays
+using StaticArrays
+using WriteVTK
 
 # Global Constants
 const R = 6371.0
@@ -39,3 +44,5 @@ include("raytracer/bfm.jl")
 include("raytracer/shortest_path.jl")
 include("raytracer/chull_carving.jl")
 include("raytracer/relocations.jl")
+# Post processing
+include("post_processing.jl")

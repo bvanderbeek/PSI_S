@@ -3,6 +3,9 @@ struct DomainGeoBoundaries
     lon::Vector{Float64}
     depth::Vector{Float64}
 end
+function DomainGeoBoundaries(D::Dict)
+    return DomainGeoBoundaries(D["lat_lims"], D["lon_lims"], D["elv_lims"])
+end
 
 struct MonteCarloSolver
     Lnorm::Int64
@@ -20,10 +23,18 @@ struct MonteCarloSolver
     printon::Int64
     saveint::Int64
 end
+function MonteCarloSolver(D::Dict)
+    return MonteCarloSolver(D["LX_norm"], D["num_iterations"], D["num_chains"], D["nn_algorithm"], D["pert_size"],
+        D["vpert_iterations"], D["dim_prior"], D["max_dim"], D["init_dim"], D["tf_hierarchical"], D["tf_rand_init"],
+        D["tf_squeeze"], D["print_interval"], D["save_interval"])
+end
 
 struct DelayedRejection
     status::Bool
     rescale::Float64
+end
+function DelayedRejection(D::Dict)
+    return DelayedRejection(D["tf_delayed_rejection"], D["rescale_value"])
 end
 
 struct ParallelTempering
@@ -35,11 +46,18 @@ struct ParallelTempering
     intsw_its::Int64
     temp_pert::Bool
 end
+function ParallelTempering(D::Dict)
+    return ParallelTempering(D["tf_parallel_tempering"], D["swap_start"], D["min_temp"], D["num_cold"],
+        D["max_temp"], D["swap_interval"], D["tf_increase_pert"])
+end
 
 struct StaticCorrections
     statics_pause::Int64
     statics_its::Int64
     ss_uncertainty::Float64
+end
+function StaticCorrections(D::Dict)
+    return StaticCorrections(D["static_start"], D["static_interval"], D["static_damping"])
 end
 
 struct RayTracing
@@ -54,14 +72,30 @@ struct RayTracing
     carving::Bool
     sub_its::Int64
 end
+function RayTracing(D::Dict)
+    if D["tf_1D_rays"]
+        V = load_taup_model(D["taup_model"])
+        Rmodel = V.r[end]
+    else
+        Rmodel = 6371.0
+    end
+    return RayTracing(D["sampling_interval"], D["interp_method"], D["taup_model"], D["tf_1D_rays"], Rmodel,
+        D["grid_dims"], D["forward_star"], D["tf_grid_noise"], D["tf_grid_carve"], D["tracing_interval"])
+end
 
 struct EarthquakesRelocation
     relocate::Bool
     relocations_its::Int64
 end
+function EarthquakesRelocation(D::Dict)
+    return EarthquakesRelocation(D["tf_run_relocation"], D["relocation_interval"])
+end
 
 struct Bayesian4Dimaging
     status::Bool
+end
+function Bayesian4Dimaging(D::Dict)
+    return Bayesian4Dimaging(D["tf_4D_imaging"])
 end
 
 # -- IP parameters
@@ -78,6 +112,12 @@ struct IPConst
     RayTracingInit::RayTracing
     EQRLOC::EarthquakesRelocation
     B4DI::Bayesian4Dimaging
+end
+function IPConst(P::Dict)
+    return IPConst(P["run_id"], P["AquisitionFiles"]["events_file"], P["AquisitionFiles"]["stations_file"], P["AquisitionFiles"]["starting_model"],
+        DomainGeoBoundaries(P["DomainBoundaries"]), MonteCarloSolver(P["MonteCarloSolver"]), DelayedRejection(P["DelayedRejection"]),
+        ParallelTempering(P["ParallelTempering"]), StaticCorrections(P["StaticCorrections"]), RayTracing(P["RayTracing"]),
+        EarthquakesRelocation(P["EarthquakeRelocation"]), Bayesian4Dimaging(P["Bayesian4D"]))
 end
 
 # -- model structures
