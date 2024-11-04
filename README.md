@@ -8,7 +8,7 @@ Principal Developer:
 Gianmarco Del Piccolo (gianmarco.delpiccolo@phd.unipd.it)
 
 Maintainers:  
-Gianmarco Del Piccolo (gianmarco.delpiccolo@phd.unipd.it)
+Gianmarco Del Piccolo (gianmarco.delpiccolo@phd.unipd.it)  
 Brandon VanderBeek (brandonpaul.vanderbeek@unipd.it)
 
 Citation:  
