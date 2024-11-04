@@ -4,8 +4,7 @@ Julia software for the probabilisitc inversion of body wave observables (P, S tr
 
 # Credits
 
-Principal Developer
-
+Principal Developer:  
 Gianmarco Del Piccolo (gianmarco.delpiccolo@phd.unipd.it)
 
 Maintainers
