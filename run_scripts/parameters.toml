@@ -8,7 +8,7 @@ run_id = "ani_benchmark"
 [[DataFields]]
 type = "teleseismic_delays_P" # Description of data (not used for teleseismic body waves) -- String
 file = "input/PSI_S_Cascadia_BinnedDelayTimes_p9P_P_MaxFreq_AK135_SIMPLE.dat" # File containing observations; String
-tf_event_demean = true # If true, demean observations by event prior to inversion. Otherwise, no pre-processing. -- Bool
+tf_event_demean = true # If true, demean observations by event with respect to chain starting model(s) prior to inversion. Otherwise, no pre-processing. -- Bool
 tf_event_statics = true # If true, solve for event statics (see [StaticCorrections]). Otherwise, no event static parameters. -- Bool
 tf_station_statics = false # If true, solve for station statics (see [StaticCorrections]). Otherwise, no station static parameters. -- Bool
 data_uncertainty = 0.250 # Estimate of average uncertainty in this dataset -- Float

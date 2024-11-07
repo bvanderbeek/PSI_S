@@ -24,14 +24,14 @@ function plot_chain_metrics(CM::ChainMetrics;
     field_colors = (:black, :blue, :green, :red, :purple, :cyan, :pink))
     # Number of iterations
     istart += 1 # Offset iteration index because index 1 = iteration 0 (starting model)
-    num_its = CM.iteration[end] - 1
+    num_its = CM.iteration[end] # No offset here because CM.iteration[1] = 0
     b = floor(Int, log10(num_its))
     a = round(num_its/(10^b), digits = 1)
     xlabel_its = "percent iteration (of "*string(a)*"e"*string(b)*")"
     # Hard-coded figure names
     fig_names = ("AcceptanceRatio", "Objective", "VarianceReduction", "Noise", "Dimensions")
     # Define percent iteration
-    rit = 100.0*(CM.iteration[istart:end] .- 1)./num_its
+    rit = 100.0*CM.iteration[istart:end]./num_its
     # Acceptance Ratio
     plot!(fig_array[1], rit, 100.0*CM.num_accepted[istart:end]./CM.iteration[istart:end],
     xlabel = xlabel_its, ylabel = "acceptance ratio (%)", legend = false)

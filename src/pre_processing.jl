@@ -187,6 +187,15 @@ function write_psi_s_observations(out_file, Data, Events, Stations)
     close(io)
     return nothing
 end
+function write_psi_s_observations(out_file, Data)
+    io = open(out_file, "w")
+    for (k, b) in enumerate(Data.observation)
+        evt_k, sta_k = Data.event_id[k], Data.station_id[k]
+        @printf(io, "%5i %5i %10.4f %5s \n", evt_k, sta_k, b, Data.phase[k])
+    end
+    close(io)
+    return nothing
+end
 
 
 function compute_event_demeaned_delays(Data, Events)
