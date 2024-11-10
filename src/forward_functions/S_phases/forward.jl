@@ -98,7 +98,9 @@ function tt_S_dlnVs_fsh_psi_gamma(raytmp,vnox,rays2nodes,rays_outdom,nray,model,
     end
     pred[obs.ray2obs[nray]] = sum(raytmp.dt) - obs.ref_t[obs.ray2obs[nray]]
 end
-function c_S_dlnVs_fsh_psi_gamma(raytmp,nray,vnox,rays2nodes,dlnVs,fsh,psi,gamma)
+function c_S_dlnVs_fsh_psi_gamma(raytmp,nray,vnox,rays2nodes,dlnVs,fsh,psi,gamma; k_fsv = 0.0)
+    # Note! k_fsv = fsv/fsh. Set k_fsv = 0 for elliptical anisotropy. A reasonable choice for
+    # mantle hexagonal anisotropy is k_fsv = -1.0/4.75
     ϕ = @view vnox[8,rays2nodes[1,nray]:rays2nodes[2,nray]]
     θ = @view vnox[9,rays2nodes[1,nray]:rays2nodes[2,nray]]
     ζ = @view vnox[10,rays2nodes[1,nray]:rays2nodes[2,nray]]
@@ -106,7 +108,7 @@ function c_S_dlnVs_fsh_psi_gamma(raytmp,nray,vnox,rays2nodes,dlnVs,fsh,psi,gamma
     @inbounds for i in eachindex(dlnVs)
         cos2α = 2*(cos(θ[i])*cos(gamma[i])*cos(ϕ[i]-psi[i])+sin(θ[i])*sin(gamma[i]))^2-1.0
         β = atan(-sin(ϕ[i]-psi[i])*cos(gamma[i])/(cos(ϕ[i]-psi[i])*sin(θ[i])*cos(gamma[i])-cos(θ[i])*sin(gamma[i]))) - ζ[i]
-        fsv = fsh[i]/(-4.75)
+        fsv = k_fsv*fsh
         raytmp.u[i] = ((sin(β)^2)/(1.0+fsh[i]*cos2α) + (cos(β)^2)*(1.0+(fsv))/((1.0+fsh[i])*(1.0+(fsv)*(2(cos2α)^2-1.0))))/(v_1D_S[i]*(1.0+dlnVs[i]))
     end
 end
@@ -124,9 +126,10 @@ function tt_S_dlnVs_fsh_psi_gamma_thomsen(raytmp,vnox,rays2nodes,rays_outdom,nra
     end
     pred[obs.ray2obs[nray]] = sum(raytmp.dt) - obs.ref_t[obs.ray2obs[nray]]
 end
-function c_S_dlnVs_fsh_psi_gamma_thomsen(raytmp,nray,vnox,rays2nodes,dlnVs,fsh,psi,gamma; k_γ = -0.6179, k_η = 0.3101, qa_b = 1.8201)
+function c_S_dlnVs_fsh_psi_gamma_thomsen(raytmp,nray,vnox,rays2nodes,dlnVs,fsh,psi,gamma; k_γ = -1.0, k_η = 0.0, qa_b = 1.8201)
     # Note! We could combine η and α/β into a single anisotropic parameter
     # Note! The α/β ratio refers to the Thomsen parameter values (not invariant isotropic) and should vary with anisotropic strength
+    # For elliptical anisotropy, k_η = 0, and the ratio α/β has no influence
     ϕ = @view vnox[8,rays2nodes[1,nray]:rays2nodes[2,nray]]
     θ = @view vnox[9,rays2nodes[1,nray]:rays2nodes[2,nray]]
     ζ = @view vnox[10,rays2nodes[1,nray]:rays2nodes[2,nray]]
@@ -174,7 +177,7 @@ function si_S_dlnVs_fsh_psi_gamma(raytmp,vnox,rays2nodes,rays_outdom,nray,model,
     end
     pred[obs.ray2obs[nray]] = sum(raytmp.dt)
 end
-function c_si_dlnVs_fsh_psi_gamma(raytmp,nray,vnox,rays2nodes,dlnVs,fsh,psi,gamma)
+function c_si_dlnVs_fsh_psi_gamma(raytmp,nray,vnox,rays2nodes,dlnVs,fsh,psi,gamma; k_fsv = 0.0)
     ϕ = @view vnox[8,rays2nodes[1,nray]:rays2nodes[2,nray]]
     θ = @view vnox[9,rays2nodes[1,nray]:rays2nodes[2,nray]]
     ζ = @view vnox[10,rays2nodes[1,nray]:rays2nodes[2,nray]]
@@ -182,7 +185,7 @@ function c_si_dlnVs_fsh_psi_gamma(raytmp,nray,vnox,rays2nodes,dlnVs,fsh,psi,gamm
     @inbounds for i in eachindex(dlnVs)
         cos2α = 2*(cos(θ[i])*cos(gamma[i])*cos(ϕ[i]-psi[i])+sin(θ[i])*sin(gamma[i]))^2-1.0
         β = atan(-sin(ϕ[i]-psi[i])*cos(gamma[i])/(cos(ϕ[i]-psi[i])*sin(θ[i])*cos(gamma[i])-cos(θ[i])*sin(gamma[i]))) - ζ[i]
-        fsv = fsh[i]/(-4.75)
+        fsv = k_fsv*fsh[i]
         raytmp.u[i] = 0.5*sin(2β)*((1.0)/(1.0+fsh[i]*cos2α) - (1.0+(fsv))/((1.0+fsh[i])*(1.0+(fsv)*(2(cos2α)^2-1.0))))/(v_1D_S[i]*(1.0+dlnVs[i]))
     end
 end
