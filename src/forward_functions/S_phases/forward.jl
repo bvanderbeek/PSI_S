@@ -126,23 +126,35 @@ function tt_S_dlnVs_fsh_psi_gamma_thomsen(raytmp,vnox,rays2nodes,rays_outdom,nra
     end
     pred[obs.ray2obs[nray]] = sum(raytmp.dt) - obs.ref_t[obs.ray2obs[nray]]
 end
-function c_S_dlnVs_fsh_psi_gamma_thomsen(raytmp,nray,vnox,rays2nodes,dlnVs,fsh,psi,gamma; k_γ = -1.0, k_η = 0.0, qa_b = 1.8201)
-    # Note! We could combine η and α/β into a single anisotropic parameter
-    # Note! The α/β ratio refers to the Thomsen parameter values (not invariant isotropic) and should vary with anisotropic strength
-    # For elliptical anisotropy, k_η = 0, and the ratio α/β has no influence
+function c_S_dlnVs_fsh_psi_gamma_thomsen(raytmp,nray,vnox,rays2nodes,dlnVs,fsh,psi,gamma;
+    k_γ = -1.0, k_η = 0.0, k_ϵ = 0.0, vp2vs = 1.8201, tf_elv_is_prj = false)
+    # Note! tf_elv_prj should be set to true when sampling the projection of the fast axis instead of the elevation angle
+    # Note! vp2vs refers to the Vp/Vs ratio of the invariant isotropic velocitites
+    # Note! k_v referes to the ratio v/fsh where v is one of the Thomsen anisotropic parameters γ, η = ϵ - δ, or ϵ
+    # For elliptical anisotropy, η = 0.0 and the values of k_ϵ and vp2vs are inconsequential to the shear velocity calculation
+    # Assuming that fsh >= 0, reasonable values for the mantle (taken from Russell et al., 2019) are:
+    #   k_γ = -1.0; k_η = 0.5018; k_ϵ = -1.6185
     ϕ = @view vnox[8,rays2nodes[1,nray]:rays2nodes[2,nray]]
     θ = @view vnox[9,rays2nodes[1,nray]:rays2nodes[2,nray]]
     ζ = @view vnox[10,rays2nodes[1,nray]:rays2nodes[2,nray]]
     v_1D_S = @view vnox[7,rays2nodes[1,nray]:rays2nodes[2,nray]]
-    q2_3, q2_15, qa2_b2 = (2.0/3.0), (2.0/15.0), qa_b^2 # Fractions for computing invariant isotropic velocity
+    q2_3, q2_15, q16_15, q4_15 = (2.0/3.0), (2.0/15.0), (16.0/15.0), (4.0/15.0) # Fractions for computing invariant isotropic velocities
     @inbounds for i in eachindex(dlnVs)
-        cosx, Δζ = symmetry_axis_cosine(psi[i], gamma[i], ϕ[i], θ[i], ζ[i])
+        selv = tf_elv_is_prj ? asin(gamma[i]) : gamma[i]
+        cosx, Δζ = symmetry_axis_cosine(psi[i], selv, ϕ[i], θ[i], ζ[i])
         cosx2 = cosx^2
         sinx2 = 1.0 - cosx2
 
-        γ, η = k_γ*fsh[i], k_η*fsh[i] # Define Thomsen parameters as scalar multiples of fsh; η = ϵ - δ
-        βiso = v_1D_S[i]*(1.0 + dlnVs[i]) # Invariant isotropic velocity; interpret dlnVs as perturbation to invariant isotropic velocity
-        β = βiso/sqrt(1.0 + q2_3*γ + q2_15*qa2_b2*η) # The Thomsen S-velocity (i.e. symmetry axis velocity)
+        # Retrieve Thomsen's anisotropic parameters assuming linear scaling with fsh
+        γ, η = k_γ*fsh[i], k_η*fsh[i] # η = ϵ - δ
+        ϵ = k_ϵ*γ
+        δ = ϵ - η
+        # Compute invariant isotropic velocities; interpret dlnVs as perturbation to invariant isotropic velocity
+        βiso = v_1D_S[i]*(1.0 + dlnVs[i])
+        αiso = βiso*vp2vs # Assume linear scaling with βiso
+        # Thomsen velocities
+        α = αiso/sqrt(1.0 + q16_15*ϵ + q4_15*(ϵ - η))
+        β = sqrt( ((βiso^2) - q2_15*η*(α^2))/(1.0 + q2_3*γ) )
 
         # Quasi-shear slownesses
         us1 = 1.0/(β*sqrt(1.0 + 2.0*qa2_b2*η*cosx2*sinx2))
