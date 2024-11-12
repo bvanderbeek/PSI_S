@@ -29,22 +29,23 @@ function check_data(Events, Stations, Data, ref_model; tf_extended_9km = false)
         sta_lat, sta_lon, sta_elv = Stations.latitude[j_sta], Stations.longitude[j_sta], Stations.elevation[j_sta]
         dist[k], baz[k] = TauP.taup_geoinv(sta_lat, sta_lon, evt_lat, evt_lon)
         # Predict travel_time
-        evt_dpt, sta_dpt = src_dpt = dR - evt_elv, dR - sta_elv
+        evt_dpt, sta_dpt = tf_extended_9km ? (dR - evt_elv, dR - sta_elv) : (-evt_elv, 0.0)
         tt_k, _ = taup_time!(TimeObj, phase_k, dist[k], evt_dpt, sta_dpt)
         if isnan(tt_k)
-            println("Phase, range, event depth, station depth: ",phase_k,", ",dist[k],", ",evt_dpt,", ",sta_dpt)
-            println("Trying phase: ",AltPhase[phase_k])
-            tt_k, _ = taup_time!(TimeObj, AltPhase[phase_k], dist[k], evt_dpt, sta_dpt)
+            phase_alt = (dist[k] >= 160.0) && (phase_k == "P") ? "PKIKP" : AltPhase[phase_k] # AD-HOC ASSUMPTION!!!
+            println("Trying phase: ", phase_alt)
+            tt_k, _ = taup_time!(TimeObj, phase_alt, dist[k], evt_dpt, sta_dpt)
             if isnan(tt_k)
                 kbad[k] = true
+                println("Phase, range, event depth, station depth: ",phase_k,", ",dist[k],", ",evt_dpt,", ",sta_dpt)
             else
-                phase_out[k] = AltPhase[phase_k]
+                phase_out[k] = phase_alt
             end
         end
         tt[k] = tt_k
     end
     nbad = sum(kbad)
-    nbad > 0 && (@warn "There are "*string(nbad)*" events!")
+    nbad > 0 && (@warn "There are "*string(nbad)*" bad events!")
 
     return kbad, tt, dist, baz, phase_out
 end
