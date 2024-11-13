@@ -157,7 +157,7 @@ function c_S_dlnVs_fsh_psi_gamma_thomsen(raytmp,nray,vnox,rays2nodes,dlnVs,fsh,p
         β = sqrt( ((βiso^2) - q2_15*η*(α^2))/(1.0 + q2_3*γ) )
 
         # Quasi-shear slownesses
-        us1 = 1.0/(β*sqrt(1.0 + 2.0*qa2_b2*η*cosx2*sinx2))
+        us1 = 1.0/(β*sqrt(1.0 + 2.0*((α/β)^2)*η*cosx2*sinx2))
         us2 = 1.0/(β*sqrt(1.0 + 2.0*γ*sinx2))
 
         # Effective anisotropic shear slowness
