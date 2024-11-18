@@ -1,3 +1,11 @@
+# To simplify these forward functions, consider defining a set of base velocity functions for different parameterisations
+# 1. Isotropic
+# 2. Harmonic
+# 3. Thomsen
+# 4. Invariant Thomsen
+# Then, within each forward function, you can call the above methods with the appropriate inputs
+# This should reduce some redundancy and probability of errors
+
 # -- P-wave isotropic travel time with absolute Vp
 function tt_P_Vp(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs) 
     Vp = get_field("Vp",raytmp.fields,rays2nodes,rays_outdom,nray,model)
@@ -140,21 +148,20 @@ function tt_P_dlnVp_fp_psi_gamma_thomsen(raytmp,vnox,rays2nodes,rays_outdom,nray
     end
     pred[obs.ray2obs[nray]] = sum(raytmp.dt) - obs.ref_t[obs.ray2obs[nray]]
 end
-function c_P_dlnVp_fp_psi_gamma_thomsen(raytmp,nray,vnox,rays2nodes,dlnVp,fp,psi,gamma; k_ϵ = -1.0, k_δ = -1.2323)
+function c_P_dlnVp_fp_psi_gamma_thomsen(raytmp,nray,vnox,rays2nodes,dlnVp,fp,psi,gamma;
+    k_ϵ = -1.0, k_δ = -1.0, tf_elv_is_prj = false)
+    # Note! tf_elv_prj should be set to true when sampling the projection of the fast axis instead of the elevation angle
+    # Note! k_v referes to the ratio v/fp where v is one of the Thomsen anisotropic parameters δ or ϵ
+    # For elliptical anisotropy, k_δ = k_ϵ
+    # Assuming that fp >= 0, reasonable values for the mantle (taken from Russell et al., 2019) are:
+    #   k_ϵ = -1.0; k_δ = -1.3101
     ϕ = @view vnox[8,rays2nodes[1,nray]:rays2nodes[2,nray]]
     θ = @view vnox[9,rays2nodes[1,nray]:rays2nodes[2,nray]]
     v_1D_P = @view vnox[6,rays2nodes[1,nray]:rays2nodes[2,nray]]
     q16_15, q4_15 = (16.0/15.0), (4.0/15.0) # Fractions for computing invariant isotropic velocity
     @inbounds for i in eachindex(dlnVp)
-        sinγ, cosγ = sincos(gamma[i])
-        # # START MODIFICATION FOR SIN(GAMMA) SAMPLING
-        # sinγ = gamma[i]
-        # if abs(sinγ) > 1.0
-        #     print("Out-of-bounds! sinγ = ", sinγ)
-        #     sinγ = sign(sinγ)
-        # end
-        # cosγ = sqrt(1.0 - (sinγ^2))
-        # END MODIFICATION FOR SIN(GAMMA) SAMPLING
+        selv = tf_elv_is_prj ? asin(gamma[i]) : gamma[i]
+        sinγ, cosγ = sincos(selv)
         sinθ, cosθ = sincos(θ[i])
         cosx2 = (cos(ϕ[i] - psi[i])*cosθ*cosγ + sinθ*sinγ)^2
         sinx2 = 1.0 - cosx2
