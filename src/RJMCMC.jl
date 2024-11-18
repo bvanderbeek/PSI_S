@@ -40,7 +40,7 @@ end
 function run_psi_s(parameter_file::String, ichunk)
     # Assumes that chunks are run serially and chunk 1 saves the IPConst file
     tf_save = ichunk > 1 ? false : true
-    P, _, IP_fields, IP, rnodes, rays, evtsta, observables, LocalRaysManager = build_inputs(parameter_file; tf_save = true, tf_serial = false)
+    P, _, IP_fields, IP, rnodes, rays, evtsta, observables, LocalRaysManager = build_inputs(parameter_file; tf_save = tf_save, tf_serial = false)
     run_psi_s(ichunk, P, IP_fields, IP, rnodes, rays, evtsta, observables, LocalRaysManager)
     return nothing
 end
@@ -141,7 +141,9 @@ function run_psi_s(ichunk, P::Dict, IP_fields::Vector{fieldinfo}, IP::IPConst, r
 
     @. TMatrix = TMatrix / DMatrix
 
-    save(string(run_directory, "/psi_s_utilities.jld"), "rnodes", rnodes,"observables",observables,"TransitionMatrix",TMatrix)
+    if ichunk == 1
+        save(string(run_directory, "/psi_s_utilities.jld"), "rnodes", rnodes, "observables", observables, "TransitionMatrix", TMatrix)
+    end
 
     return nothing
 end
