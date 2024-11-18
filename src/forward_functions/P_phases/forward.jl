@@ -149,7 +149,7 @@ function tt_P_dlnVp_fp_psi_gamma_thomsen(raytmp,vnox,rays2nodes,rays_outdom,nray
     pred[obs.ray2obs[nray]] = sum(raytmp.dt) - obs.ref_t[obs.ray2obs[nray]]
 end
 function c_P_dlnVp_fp_psi_gamma_thomsen(raytmp,nray,vnox,rays2nodes,dlnVp,fp,psi,gamma;
-    k_ϵ = -1.0, k_δ = -1.0, tf_elv_is_prj = false)
+    k_ϵ = -1.0, k_δ = -1.0, tf_elv_is_prj = true)
     # Note! tf_elv_prj should be set to true when sampling the projection of the fast axis instead of the elevation angle
     # Note! k_v referes to the ratio v/fp where v is one of the Thomsen anisotropic parameters δ or ϵ
     # For elliptical anisotropy, k_δ = k_ϵ
