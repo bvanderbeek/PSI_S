@@ -15,7 +15,7 @@ function plot_chain_metrics(parameter_file; istart = 1, tf_display_figures = fal
     # Plot chains
     fig_array, fig_names = plot_chain_metrics(cm; istart = istart, tf_display_figures = tf_display_figures)
     # Print figures (hard-coded figure file names)
-    tf_print && [png(h, chain_directory * "/" * fig_names[i] * ".png") for (i, h) in enumerate(fig_array)]
+    tf_print && [png(h, chain_directory * "/" * fig_names[i] * "_i" * string(istart) * ".png") for (i, h) in enumerate(fig_array)]
 
     return fig_array, fig_names
 end
@@ -57,8 +57,7 @@ function plot_chain_metrics(CM::ChainMetrics;
     return fig_array, fig_names
 end
 function plot_chain_metrics(CM::Array{<:ChainMetrics, N};
-    istart = 1, tf_display_figures = true,
-    field_colors = (:black, :blue, :green, :red, :purple, :cyan, :pink)) where {N}
+    istart = 1, tf_display_figures = true, field_colors = (:black, :blue, :green, :red, :purple, :cyan, :pink)) where {N}
 
     # Compute average starting residual rms
     rms0 = 0.0
