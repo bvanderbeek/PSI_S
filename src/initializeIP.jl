@@ -43,7 +43,7 @@ function build_inputs(parameter_file::String; tf_save = false, tf_serial = false
         run_directory = P["out_directory"]*"/"*P["run_id"]
         mkpath(run_directory)
         # Save copy of parameter file
-        cp(parameter_file, run_directory*"/parameters.toml")
+        cp(parameter_file, run_directory*"/parameters.toml"; force = true) # Overwrite any pre-existing parameter file
         save(
             string(run_directory, "/IPConst.jld"), "IP", IP,
             "IP_fields", IP_fields,
