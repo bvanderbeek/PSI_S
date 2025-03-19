@@ -142,7 +142,7 @@
 # To run this inversion, connect to this directory and perform the following commands,
 # >> julia --threads 1 --check-bounds=no jl-files/call_psi_s.jl input/parameters.toml 4 1
 #   This takes about an hour to complete...Make sure you have at least 4 cores.
-#   You will need to edit the code paths in call_psi_s.jl and change the output directory name (if desired)
+#   You will need to edit the code paths in call_psi_s.jl and change the output directory name in the toml-file (if desired)
 # >> julia jl-files/plot_chain_summary.jl input/parameters.toml 0
 #   This will make plots of the chains starting from iteration 0 (i.e. starting model)
 #   These plots will be stored in the inversion output directory defined in parameters.toml
