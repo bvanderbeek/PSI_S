@@ -1,0 +1,26 @@
+# Install Required Packages
+using Pkg
+# Package Dependencies
+Pkg.add("JLD")
+Pkg.add("Interpolations")
+Pkg.add("DelimitedFiles")
+Pkg.add("IntervalSets")
+Pkg.add("Statistics")
+Pkg.add("LazySets")
+Pkg.add("Random")
+Pkg.add("DataStructures")
+Pkg.add("NearestNeighbors")
+Pkg.add("TauP")
+Pkg.add("Dierckx")
+Pkg.add("Distributed")
+Pkg.add("DistributedArrays")
+Pkg.add("SharedArrays")
+Pkg.add("MiniQhull")
+Pkg.add("LinearAlgebra")
+Pkg.add("SparseArrays")
+Pkg.add("Polyhedra")
+Pkg.add("TOML")
+# Post-processing
+Pkg.add("LazyArrays")
+Pkg.add("StaticArrays")
+Pkg.add("WriteVTK")
