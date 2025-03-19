@@ -1,0 +1,113 @@
+# PSI_S PARAMETER FILE
+# Example parameter file for run_psi_s()
+
+# OUTPUT: Inversion results are stored in output_directory/run_id/
+# Directory will be created if it does not already exist.
+out_directory = "output"
+run_id = "iso_ttp_es_1D"
+
+# DATA FIELDS: Define observations to be fit
+[[DataFields]] # Array of Tables (i.e. Dictionaries)
+type = "local_P_traveltimes" # Description of data (not used for teleseismic body waves) -- String
+file = "input/ttp_3D_iso_fast_block_50ms.dat" # File containing observations; String
+tf_event_demean = true # If true, demean observations by event with respect to chain starting model(s) prior to inversion. Otherwise, no pre-processing. -- Bool
+event_statics_id = 0 # If > 0, solve for event statics (see [StaticCorrections]). Otherwise, no event static parameters. -- Int
+station_statics_id = 0 # If > 0, solve for station statics (see [StaticCorrections]). Otherwise, no station static parameters. -- Int
+# Note! Statics with same ID are shared accross observables (e.g. you want a different static ID for P and S data though they may share the same event/station)
+data_uncertainty = 0.05 # Estimate of average uncertainty in this dataset -- Float
+forward_function = "tt_P_dlnVp" # Name of forward function used to predict this data type. -- String
+# Repeat above 8 lines for every dataset you want to fit, e.g.,
+# [[DataFields]]
+# type =...
+
+# PARAMETER FIELDS: Define parameters to estimate
+[[ParameterFields]] # Array of Tables (i.e. Dictionaries)
+field = "dlnVp" # Name of parameter field to estimate. -- String
+prior = "uniform" # Prior distribution assumed for this field. -- String
+pdf_parameters = [-0.1, 0.1] # Parameters describing the prior distribution. -- Vector{Float}
+lat_lims = [37.2, 37.8] # Latitude limits for this field (min, max) in DEGREES. -- Vector{Float}(2)
+lon_lims = [14.7, 15.3] # Longitude limits for this field (min, max) in DEGREES. -- Vector{Float}(2)
+elv_lims = [-12.0, 1.0] # Elevation limits for this field (min, max) in KILOMETERS. -- Vector{Float}(2)
+time_lims = [0.0, 0.0] # Time limits for this field (min, max) for 4D inversions...EXPERIMENTAL! -- Vector{Float}(2)
+extrap_value = 0.0 # If tf_squeeze is true (see [MonteCarloSolver]), then values outside this field domain are extrapolated to this constant value. -- Float
+
+# AQUISITION: Define data aquisition parameters
+[AquisitionFiles] # Table (i.e. Dictionary)
+events_file = "input/evt.dat" # File containing all sources
+stations_file = "input/sta.dat" # File containing all receivers
+starting_model = "input/vel1D_etna.dat" # File containing 1D starting model (currently assumed 1D)
+
+# DOMAIN BOUNDARIES: Define limits of imaging volume
+[DomainBoundaries] # Table (i.e. Dictionary)
+lat_lims = [37.2, 37.8] # Latitude limits of imaging volume (min, max) in DEGREES. -- Vector{Float}(2)
+lon_lims = [14.7, 15.3] # Longitude limits of imaging volume (min, max) in DEGREES. -- Vector{Float}(2)
+elv_lims = [-12.0, 1.0]  # Elevation limits of imaging volume (min, max) in KILOMETERS. -- Vector{Float}(2)
+
+# MONTE CARLO SOLVER: Define sampling parameters
+[MonteCarloSolver] # Table (i.e. Dictionary)
+l_norm = 2 # The norm used to define the objective function. -- Float
+num_iterations = 1e5 # Number of sampling iterations. -- Int
+num_chains = 4 # Number of Markov chains per chunk (total number of chains = num_chains*num_chunks). -- Int
+num_chunks = 1 # Number of independent chunks -- Int
+nn_algorithm = "linear" # Algorithm used for nearest-neighbor interpolation. -- String
+pert_size = 0.1 # Perturbation size (fractional standard deviation of Gaussian used to perturb parameters; mulitpled by prior width). -- Float
+vpert_iterations = 0 # Only perturb parameter values (i.e. not number, position), for this many iterations. -- Int
+dim_prior = "uniform" # Prior distribution for number of parameters in each field. -- String
+max_dim = 1000 # Maximum number of parameters in each field. -- Int
+init_dim = 50 # Initial number of parameters in each field. -- Int
+tf_hierarchical = false # If true, solve for hierarchical parameters (i.e. data noise) for each dataset. -- Bool
+tf_rand_init = false # If true, initial models in each chain with random parameter values. Otherwise, null perturbations used. -- Bool
+tf_squeeze = false # If true, use constant extrapolation value (see [ParameterFields]) outside parameter field domain. -- Bool
+save_interval = 1e4 # Save model samples every 'save_interval' iterations. -- Int
+print_interval = 1e3 # Print progress to screen every 'print_interval' iterations. -- Int
+
+# DELAYED REJECTION
+[DelayedRejection] # Table (i.e. Dictionary)
+tf_delayed_rejection = false # If true, implement delayed rejection. -- Bool
+rescale_value = 4 # Proposal standard deviation re-scaling -- Float
+
+# PARALLEL TEMPERING
+[ParallelTempering] # Table (i.e. Dictionary)
+tf_parallel_tempering = false # If true, implement parallel tempering. -- Bool
+swap_start = 1e3 # Start chain swaps at iteration 'swap_start'. -- Int
+swap_interval = 1e3 # Perform chain swap every 'swap_interval' iterations. -- Int
+max_temp = 10.0 # Maximum chain temperature. -- Float
+min_temp = 1.0 # Cold chain temperature. -- Float
+num_cold = 1 # Number of cold chains. -- Int
+tf_increase_pert = true # If true, increase proposal perturbation size as sqrt(T) [check maximum...]. -- Bool
+
+# STATIC CORRECTIONS
+[StaticCorrections] # Table (i.e. Dictionary)
+static_start = 5e5 # Start linear static inversion at iteration 'static_start'. -- Int
+static_interval = 1e4 # Solve linear system for statics every 'static_interval' iteration. -- Int
+static_damping = 1.0e6 # Ratio of data and station static uncertainty (i.e. damping value). -- Float
+
+# RAY TRACING
+[RayTracing] # Table (i.e. Dictionary)
+sampling_interval = 0.1 # Ray discretisation interval in KILOMETERS. -- Float
+# For 1D rays, use TauP
+tf_1D_rays = false # If true, use 1D rays predicted by TauP for all data. -- Bool
+interp_method = "linear" # Parameter value interpolation method. -- String
+taup_model = "input/etna_ak135_ext3500m.nd" # Reference model for TauP calculations. -- String
+# For 3D ray tracing, use shortest path method
+grid_dims = [121, 121, 27] # Number of grid nodes along each dimension (lat, lon, vertical). -- Vector{Int}(3)
+forward_star = 5 # Forward star level for shortest path method. -- Int
+tf_grid_noise = true # If true, add random perturbations to grid nodes; reduces systematic travel-time errors. -- Bool
+tf_grid_carve = true # If true, implement grid carving to try and reduce ray tracing computation time. -- Bool
+tracing_interval = 2e5 # Perform ray tracing on ensemble model every 'tracing_interval' iterations. -- Int
+topography_file = "" # Topography file with space-delimited columns [lat. lon. elevation]; can define "" for no topography -- String
+# Note! Topography file must contain grid_dims[1]*grid_dims[2] points ordered by increasing lat. then lon.
+tf_hang_model = false # If true, the 1D velocity will be vertically shifted according to the topography -- Bool
+
+# EARTHQUAKE RELOCATION
+[EarthquakeRelocation] # Table (i.e. Dictionary)
+tf_run_relocation = false # If true, solve non-linear inversion for hypocentral parameters. -- Bool
+tf_initial_1D_relocation = false # If true, will relocate events in starting 1D velocity model -- Bool
+first_relocation = 2 # Run first relocation at the 'first_relocation' ray trace -- Int
+relocation_interval = 1 # Solve for new hypocentral parameters every 'relocation_interval' ray tracing steps. -- Int
+search_width = 25 # Half-width of search cube (in nodes) around current event position for new location -- Int
+tf_wadati_init = false # If true, use Wadati initialization for origin time -- Bool
+
+# TIME-DEPENDENT INVERSION
+[Bayesian4D] # Table (i.e. Dictionary)
+tf_4D_imaging = false # If true, solve temporal parameter dependence...EXPERIMENTAL!

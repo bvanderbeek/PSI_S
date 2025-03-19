@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# Job Options #
+
+#PBS -q dm
+#PBS -N 0_ensemble
+#PBS -l select=1:ncpus=28:ompthreads=28
+#PBS -l walltime=180:00:00
+
+# Required Environment Variables #
+
+export PSI_S=/u/unipd/vanderbeek/PSI_S
+
+# Require Variables #
+
+WRKDIR=/storage2/unipd/vanderbeek/cascadia_rjmcmc/S # From where the job will run
+# JFILE=make_ani_ensemble_vts.jl # Julia file to run
+JFILE=build_ensemble_model_4.jl
+OPTS=--check-bounds=no # Julia flags
+
+# Run Job #
+cd $WRKDIR
+julia $OPTS $JFILE

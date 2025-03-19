@@ -1,0 +1,153 @@
+# QUICK START -- PSI_S #
+# Quick-start guide to running reversible-jump Markov-chain Monte Carlo (rj-mcmc)
+# seismic inversions with the Platform for Seismic Imaging -- Stochastic (PSI_S).
+
+# Preliminaries
+# If you do not have TauP v2.7.0 or greater, download it from https://github.com/bvanderbeek/TauP.jl
+# Reccommend installing Julia via juliaup (https://github.com/JuliaLang/juliaup) to easily run different
+# Julia releases should an incomaptibility arise.
+
+# Note about directory structure. You're free to organize inversion inputs/outputs as you like
+# but I find the following structure useful:
+# + Main Project Directory (e.g. TomoEtna/)
+# -> input/ (subdirectory for storing all input data)
+# -> output/ (subdirectory for storing all inversion outputs)
+# -> jl-files/ (subdirectory for storing julia scripts; data processing, run-scripts, etc.)
+# -> viz/ (subdirectory for storing Paraview visualization files)
+# See examples/iso_local_eq for an example.
+
+# To run the inversions, you should copy the following processing and run scripts from the
+# code directory to your local project folder (these are just the essential scripts):
+# 1. examples/parameter_files/parameters_iso_p.toml (or another example parameter file to modify)
+# 2. examples/scripts/julia/call_psi_s.jl
+# 3. examples/scripts/julia/plot_chain_summary.jl
+# 4. examples/scripts/julia/build_ensemble_model.jl
+
+
+# Step 0. Download the software + Quick Git Tutorial.
+# PSI_S is not yet a registered Julia package and so the source code must be downloaded
+# directly from GitHub. The current working version can be downloaded via,
+# >> git clone https://github.com/bvanderbeek/PSI_S.git <path to local software directory>
+# While using Git is reccommended to easily monitor code changes, you can also simply
+# download all source code in a zip-file directly from the GitHub repository.
+# If downloaded via Git,m you can monitor local changes you may have made to the source
+# code via,
+# >> git status <local path to PSI_S directory>
+# >> git diff <file_1> <file_2>
+# You can check for any updates to the code base via,
+# >> git fetch --all <local path to PSI_S directory>
+# >> git status <local path to PSI_S directory>
+# This will show any changes made to the original GitHub repository.
+# You can then update your version of PSI_S (only after running git fetch) via,
+# >> git pull <local path to PSI_S directory>
+# Then install the dependent Julia packages via,
+# >> julia src/add_required_packages_script.jl
+
+# Step 1. Prepare your data.
+# Four key types of data files are needed:
+# 1. Events file. This contains a list of *all* events for which there are observations.
+# Every event must have unique integer-valued ID. The file must have the following
+# space-delimited (any number of spaces will do) columns,
+#   Event ID (Int)   Latitude (deg.; Float)   Longitude (deg.; Float)   Depth (km; Float)   Origin Time Perturbation (s; Float)
+# Origin Time Perturbation is only relevent for earthquake relocation (good default value is 0.0)
+#
+#
+# 2. Station file. This contains a list of *all* stations which recorded an observation.
+# Every station must have a unique integer-valued ID (this is likely to change in the future
+# because standard network/catalog formats use String-valued station names and renaming 
+# stations can cause indexing related errors if done incorrectly). The file must have the following
+# space-delimited (any number of spaces will do) columns,
+#   Event ID (Int)   Latitude (deg.; Float)   Longitude (deg.; Float)   Elevation (km; Float)
+#
+#
+# 3. Observation files. These contain the observations you want to invert. Currently,
+# this include local travel-times (i.e. for sources are inside your imaging volume), delay
+# times (i.e. for sources outside the imgaing volume; e.g., teleseismic events), and splitting
+# intensities (units are all seconds). Seperate files are required for each type of observation and phase (P or S).
+# For sources inside the imgaing volume, only direct P or S phases are currently implemented.
+# For external sources, any TauP recognized phase can be used. However, these should not
+# include phases that convert inside the imaging volume (e.g. a P wave that converts to S at
+# some internal discontinuity). Lastly, for anisotropic inversions of S travel-times or splitting
+# intensity a separate observation file containing the corresponding polarizations azimuths
+# (defined in the ray-normal QT-plane; radians) is required (this may change in the future...)
+#
+# All observation files have the same format with the following space-delimited columns (any number of spaces will do),
+#   Event ID (Int)   Station ID (Int)  Observation Value (Float)   Phase (String)
+#
+# *** To help prepare your event, station, and observation data files, see the Julia script examples/scripts/julia/convert_check_data_files.jl
+# *** This will read existing delimited files (any format) and convert them to PSI_S format including the re-naming of station IDs.
+# *** Phase naming checks are also performed in the case that TauP is used for ray tracing
+#
+# 4. Starting Velocity Model. Currently, all starting models must be 1D and have the following
+# space-delimited (any number of spaces will do) columns,
+#   Radius (km; Float)   P-velocity (km/s: Float)   S/velocity (km/s; Float)
+#
+# Additionally, the model must be monotonically increasing in depth (no discontinuities).
+
+
+# Step 2. Prepare the parameter file.
+# All inversion parameters are define in a toml-file (docs at https://toml.io/en/) which is an intuitive
+# and readable format for storing lots of inputs. Examples of PSI_S parameter files are in
+# examples/parameter_files/ and all follow the same format. The examples are heavily documented so read
+# through them to understand the parameters that need to be defined.
+
+# *** As many errors can be traced back to issues with Step 1-2, you can test building the PSI_S structures
+# by running the script examples/scripts/julia/run_build_inputs.jl. This can be time-consuming if there are many
+# 3D rays to trace.
+
+# Step 3. Run the inversion (probabilistic sampling).
+# Copy examples/scripts/julia/call_psi_s.jl to wherever you're running the inversion. # You need to edit the
+# first two paths at the beginning to refelct your directory structure. Then, the inversion is launched from
+# a terminal via,
+# >> julia --threads <num_threads> --check-bounds=no call_psi_s.jl <parameter_file> <num_chains_per_chunk> <num_chunk>
+# The julia flag --threads tells julia how many threads to start with. These threads are used for parallel 3D ray tracing.
+# In place of --threads you can also use the environment variable JULIA_NUM_THREADS.
+# The julia flag --check-bounds=no is not required but may speed up run time.
+# The remaining inputs are described in call_psi_s.jl but breifly are,
+#   parameter_file: The input parameter file from Step 2
+#   num_chains_per_chunk: Number of chains to run per compute node
+#   num_chunk: The batch of chains we are launching (see comments in all_psi_s.jl)
+# All output files from the inversion will be stored in the path defined in the toml-parameter file (including a copy of the
+# parameters for reference).
+
+
+# Step 4. Inspect Markov Chains.
+# After the inversion completes, you should inspect the behavior of the Markov chains for convergence.
+# The main convergence criteria are,
+# i) Did the acceptance ratio converge to a reasonable value (25%-50%)?
+# ii) Did the model dimensions converge?
+# iii) Did the objective function/variance reduction converge?
+# iv) Does the noise parameter seem reasonable?
+# Plots of these properties can be made via examples/scripts/julia/plot_chain_metrics.jl. This script
+# will save the resulting plots into the inversion directory.
+
+
+# Step 5. Build ensemble model and summary statistics
+# To build the ensemble model, we must collect and aggregrate all the sampled models.
+# This is done via the script examples/scripts/julia/build_ensemble_model.jl
+# Here you will find many options for how to construct the ensemble and which statistics
+# to compute. The output is a vtk/file for visualization in Paraview.
+#
+# Beyon building a 3D model, it is also useful to inspect posterior distributions at particular
+# points. An example on how to do this is here: examples/scripts/julia/plot_posteriors.jl
+
+# Running on a cluster follows these same steps but now the Julia codes are launched via submission scripts.
+# The Markoc chain plots (Step 4) are not computationally heavy and can be run locally (don't require a compute node.).
+# Example submission scripts can be found in examples/scripts/hpc_job_submission/.
+
+# Running Local (smallish) Example
+# An example inversion of local earthquake P-wave traveltimes for isotropic Vp anomalies is in,
+# examples/iso_local_eq/. This is just a simple model with a +5% P and S velocity block anomaly
+# at the center. The true model is in examples/iso_local_eq/viz/iso_velocity_fast_block.vts.
+# To run this inversion, connect to this directory and perform the following commands,
+# >> julia --threads 1 --check-bounds=no jl-files/call_psi_s.jl input/parameters.toml 4 1
+#   This takes about an hour to complete...Make sure you have at least 4 cores.
+#   You will need to edit the code paths in call_psi_s.jl and change the output directory name (if desired)
+# >> julia jl-files/plot_chain_summary.jl input/parameters.toml 0
+#   This will make plots of the chains starting from iteration 0 (i.e. starting model)
+#   These plots will be stored in the inversion output directory defined in parameters.toml
+#   Again, you need to edit code paths in plot_chain_summary.jl
+# >> julia jl-files/build_ensemble_model.jl
+#   This will save the ensemble Paraview model to the path defined in build_ensemble_model.jl
+#   As always, check code paths in build_ensemble_model.jl
+# Now you can load the output model file into Paraview and look around.
