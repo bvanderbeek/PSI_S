@@ -33,7 +33,7 @@
 # If downloaded via Git,m you can monitor local changes you may have made to the source
 # code via,
 # >> git status <local path to PSI_S directory>
-# >> git diff <file_1> <file_2>
+# >> git diff <file_1>
 # You can check for any updates to the code base via,
 # >> git fetch --all <local path to PSI_S directory>
 # >> git status <local path to PSI_S directory>
@@ -48,8 +48,9 @@
 # 1. Events file. This contains a list of *all* events for which there are observations.
 # Every event must have unique integer-valued ID. The file must have the following
 # space-delimited (any number of spaces will do) columns,
-#   Event ID (Int)   Latitude (deg.; Float)   Longitude (deg.; Float)   Depth (km; Float)   Origin Time Perturbation (s; Float)
-# Origin Time Perturbation is only relevent for earthquake relocation (good default value is 0.0)
+#   Event ID (Int)   Latitude (deg.; Float)   Longitude (deg.; Float)   Depth (km; Float)   Time Coordinate (for experimental 4D; Float)
+# Time coordinate is only relevant for 4D (good default value is 0.0)
+# Depth is positive into the Earth!
 #
 #
 # 2. Station file. This contains a list of *all* stations which recorded an observation.
@@ -57,7 +58,7 @@
 # because standard network/catalog formats use String-valued station names and renaming 
 # stations can cause indexing related errors if done incorrectly). The file must have the following
 # space-delimited (any number of spaces will do) columns,
-#   Event ID (Int)   Latitude (deg.; Float)   Longitude (deg.; Float)   Elevation (km; Float)
+#   Station ID (Int)   Latitude (deg.; Float)   Longitude (deg.; Float)   Elevation (km; Float)
 #
 #
 # 3. Observation files. These contain the observations you want to invert. Currently,
@@ -81,8 +82,6 @@
 # 4. Starting Velocity Model. Currently, all starting models must be 1D and have the following
 # space-delimited (any number of spaces will do) columns,
 #   Radius (km; Float)   P-velocity (km/s: Float)   S/velocity (km/s; Float)
-#
-# Additionally, the model must be monotonically increasing in depth (no discontinuities).
 
 
 # Step 2. Prepare the parameter file.
@@ -106,7 +105,7 @@
 # The remaining inputs are described in call_psi_s.jl but breifly are,
 #   parameter_file: The input parameter file from Step 2
 #   num_chains_per_chunk: Number of chains to run per compute node
-#   num_chunk: The batch of chains we are launching (see comments in all_psi_s.jl)
+#   num_chunk: The batch of chains we are launching (see comments in call_psi_s.jl)
 # All output files from the inversion will be stored in the path defined in the toml-parameter file (including a copy of the
 # parameters for reference).
 
@@ -126,9 +125,9 @@
 # To build the ensemble model, we must collect and aggregrate all the sampled models.
 # This is done via the script examples/scripts/julia/build_ensemble_model.jl
 # Here you will find many options for how to construct the ensemble and which statistics
-# to compute. The output is a vtk/file for visualization in Paraview.
+# to compute. The output is a vtk-file for visualization in Paraview.
 #
-# Beyon building a 3D model, it is also useful to inspect posterior distributions at particular
+# Beyond building a 3D model, it is also useful to inspect posterior distributions at particular
 # points. An example on how to do this is here: examples/scripts/julia/plot_posteriors.jl
 
 # Running on a cluster follows these same steps but now the Julia codes are launched via submission scripts.
