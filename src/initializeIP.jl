@@ -7,8 +7,8 @@ function build_obslist(B)
     # Add observations
     IP_obs = Vector{obsinfo}()
     for D in B # Loop over datasets to fit
-        add_obs(IP_obs, D["type"], D["file"], D["tf_event_demean"], D["tf_event_statics"],
-            D["tf_station_statics"], D["data_uncertainty"], D["forward_function"])
+        add_obs(IP_obs, D["type"], D["file"], D["tf_event_demean"], D["event_statics_id"],
+            D["station_statics_id"], D["data_uncertainty"], D["forward_function"])
     end
     return IP_obs
 end
@@ -65,14 +65,6 @@ function initialize_IP(IP, IP_obs, IP_fields)
     @. IP.lims.lat = deg2rad(IP.lims.lat)
     @. IP.lims.lon = deg2rad(IP.lims.lon)
 
-    # -- rotation reference frame for azimuth and elevation
-    φ, θ = 0.5*(IP.lims.lon[begin]+IP.lims.lon[end]), 0.5*(IP.lims.lat[begin]+IP.lims.lat[end])
-    Rx, Ry = rotation_matrices(φ,θ)
-    lonm, latm = mean(IP.lims.lon), mean(IP.lims.lat)
-    Px, Py, Pz = [1 * cos(latm) * cos(lonm)], [1 * cos(latm) * sin(lonm)], [1 * sin(latm)]
-    rotate_basis(Py,Pz,Px,Rx,Ry)
-    print("\n",Px," ",Py," ",Pz)
-
     # -- extraction Voronoi diagrams boundaries
     voronoi_slims = []
     for fieldid in eachindex(IP_fields)
@@ -87,7 +79,6 @@ function initialize_IP(IP, IP_obs, IP_fields)
         voronoi_slims[fieldid][3][1], voronoi_slims[fieldid][3][2] = R1, R2
     end
 
-    
     # -- populates event and station objects
 	ievt = readdlm(IP.InputEvt)   # -- reads the events file
 	ista = readdlm(IP.InputSta)   # -- reads the stations file
@@ -141,7 +132,6 @@ function initialize_IP(IP, IP_obs, IP_fields)
         ray2obs = Dict{Int64, Int64}()  # -- rays to observed values
 
         for i in axes(iobs,1)           # -- loops over all the observed values for observable obs
-
             evt_id = Int(iobs[i,1])
             sta_id = Int(iobs[i,2])
             phase_name = iobs[i,4]
@@ -188,11 +178,6 @@ function initialize_IP(IP, IP_obs, IP_fields)
                 (obs2sta[j] == stas_obs[i]) && (obs2sta[j] = i)
             end
         end
-        
-
-        # -- initialize static structures
-        # obs_evts = zeros(Float64,length(evts_obs))
-        # obs_stas = zeros(Float64,length(stas_obs))
 
         observable = ObsConst(
             obs.name,
@@ -208,7 +193,7 @@ function initialize_IP(IP, IP_obs, IP_fields)
             ray2obs,
             obs.demean,
             obs.eventstatics,
-            obs.stationstatics
+            obs.stationstatics,
         )
 
         if obs.forward_name != ""           # -- obs is pushed in predictive/descriptive vector
@@ -224,15 +209,16 @@ function initialize_IP(IP, IP_obs, IP_fields)
         obsvec,
         )
 
-    
-    # -- the code compares the number of local earthquakes with the number of stations, and decides which ones to use as sources and receivers.
+    # -- the code compares the number of local earthquakes with the number of stations, and decides which one to use as sources and receivers.
     # -- is relocation status is ON, stations are always the sources
     refm = readdlm(IP.velocitymodel,' ',Float64,'\n')   # -- reads the reference 1D velocity model
+    # -- search for local events/stations
     if IP.RayTracingInit.allTauP
         local_evts, local_stats = Set{Int64}(), Set{Int64}()
     else
         local_evts, local_stats = indomain(evtsta,paths_list,IP.lims)  # -- is local ray-tracing required? (at least one event inside the inversion domain) 
     end
+
     ray2source_receiver = Dict{Int64,Vector{Int64}}()   # associates every ray-ID to [source_id,station_id,phase]
     pair2ray = Dict{Vector{Int64}, Int64}()         # associates every pair source-receiver to a ray-ID
     source2receivers = Dict{Int64,Vector{Int64}}()  # associates every source to the set of receivers
@@ -274,8 +260,11 @@ function initialize_IP(IP, IP_obs, IP_fields)
     RT_status = false
     (length(local_evts) != 0) && (RT_status = true)
 
+    # -- Loads topography
+    topography, topography_status = load_topography(IP)
+
     source_nodes, receiv_nodes = Dict{Int64, Int64}(), Dict{Int64, Int64}()
-    LocalRaysManager = LocalRaysManagerConst(RT_status,nnodes,fw_level,pert,carving,ray2source_receiver,source2receivers,pair2ray,local_evts,local_stats,source_nodes,receiv_nodes,sub_its,relocations)    
+    LocalRaysManager = LocalRaysManagerConst(RT_status,nnodes,fw_level,pert,carving,ray2source_receiver,source2receivers,pair2ray,local_evts,local_stats,source_nodes,receiv_nodes,sub_its,relocations,topography_status,topography)
     
     paths = Array{pathConst,1}(undef,length(paths_list))
     rays = Array{RayConst,1}(undef,length(paths_list))
@@ -289,7 +278,6 @@ function initialize_IP(IP, IP_obs, IP_fields)
             for nray in eachindex(rays)
                 if haskey(obs.ray2obs,nray)
                     @. rays[nray].ζ = obs.obsval[obs.ray2obs[nray]]
-                    # correct_polarization(rnodes,rays[nray],nray,evtsta)
                 end
             end
         end
@@ -309,6 +297,8 @@ function build_rays(paths,rays,observables,evtsta,LocalRaysManager,IP,refm)
     vss = Vector{Float64}()
     rays2nodes = Vector{Vector{Int64}}()   # -- associates each ray to the corresponding nodes
     nodes2rays = Vector{Int64}()           # -- associates each node to the corresponding ray
+
+    topography, topography_status = LocalRaysManager.topography, LocalRaysManager.topography_status
 
     for nray in eachindex(paths)
         evt = paths[nray].evt
@@ -333,8 +323,22 @@ function build_rays(paths,rays,observables,evtsta,LocalRaysManager,IP,refm)
         rads = @. sqrt(x^2+y^2+z^2)
 
         pre_ind = length(vps) + 1
-        [push!(vps,ref_V1D(rads[l],refm[:,[1,2]])) for l in eachindex(rads)]
-        [push!(vss,ref_V1D(rads[l],refm[:,[1,3]])) for l in eachindex(rads)]
+
+
+        nnodes =  IP.RayTracingInit.nnodes
+        φmin, θmin = IP.lims.lon[1], IP.lims.lat[1]
+        dφ, dθ = (IP.lims.lon[2]-IP.lims.lon[1])/nnodes[2], (IP.lims.lat[2]-IP.lims.lat[1])/nnodes[1]
+        for l in eachindex(rads)
+            h = 0
+            if topography_status && IP.RayTracingInit.velmod_shift
+                lon, lat = atan(y[l],x[l]), asin(z[l]/sqrt(x[l]^2+y[l]^2+z[l]^2))
+                latid = fast_v_dist(lat,θmin,dθ)
+                lonid = fast_v_dist(lon,φmin,dφ)
+                h = LocalRaysManager.topography[latid,lonid]
+            end
+            push!(vps,ref_V1D(rads[l]-h,refm[:,[1,2]]))
+            push!(vss,ref_V1D(rads[l]-h,refm[:,[1,3]]))
+        end
         lst_ind = length(vps)
 
         ray = RayConst(                     # -- see rayConst structure in structures.jl for details
@@ -356,17 +360,34 @@ function build_rays(paths,rays,observables,evtsta,LocalRaysManager,IP,refm)
                 obs.ref_t[obs.ray2obs[nray]] = ray.t_1D[1]
             end
         end
-
         for i in eachindex(x)[begin:end-1]
             φ, θ = atan(y[i],x[i]), asin(z[i]/sqrt(x[i]^2+y[i]^2+z[i]^2))
             Rx, Ry = rotation_matrices(φ,θ)
-            R = Ry*Rx
-            b = inv(R)*[dy[i],dz[i],dx[i]]
+            Rot = Ry*Rx
+            b = inv(Rot)*[dy[i],dz[i],dx[i]]
             dy[i], dz[i], dx[i] = b[1], b[2], b[3]
         end
 
         @. ray.ϕ = atan(dz,dy)          # ray-path azimuth
-        @. ray.θ = asin(dx/ray.L)       # ray-path elevation
+        @. ray.θ = asin(round(dx/ray.L,digits=6))       # ray-path elevation
+
+        # φ1, θ1 = rad2deg(atan(y[end-1],x[end-1])), rad2deg(asin(z[end-1]/sqrt(x[end-1]^2+y[end-1]^2+z[end-1]^2)))
+        # φ2, θ2 = rad2deg(atan(y[end],x[end])), rad2deg(asin(z[end]/sqrt(x[end]^2+y[end]^2+z[end]^2)))
+        # Δ, α = inverse_geodesic(θ1, φ1, θ2, φ2)
+        # α = 90-α
+        # if α > 180
+        #     α = α - 360
+        # elseif α < -180
+        #     α = α + 360
+        # end
+        # # print("\nazm: ",α," ",rad2deg(ray.ϕ[end]))
+        # N = 2
+        # n = [x[N]-x[N-1],y[N]-y[N-1],z[N]-z[N-1]]
+        # p = [x[N-1],y[N-1],z[N-1]]
+        # n, p = n/norm(n), p/norm(p)
+        # ß = 90 - rad2deg(acos(dot(n,p)))
+        # print("\ndip: ",ß," ",rad2deg.(ray.θ[N-1]))
+
 
         push!(ray.ϕ,ray.ϕ[end])
         push!(ray.θ,ray.θ[end])
@@ -488,15 +509,6 @@ function initialize_model(IP,IP_fields,rnodes,evtsta,observables,rays,Gg,Gt,vnox
             field.init_val
     )
 
-        # if check_1dim(voronoi)
-        #     for ind in axes(voronoi.r,2)[1:voronoi.n[1]]
-        #         if voronoi.fieldname == "Vp"
-        #             voronoi.v[ind] = ref_V1D(voronoi.r[1,ind],refm[:,[1,2]])
-        #         elseif voronoi.fieldname == "Vs"
-        #             voronoi.v[ind] = ref_V1D(voronoi.r[1,ind],refm[:,[1,3]])
-        #         end
-        #     end
-        # end
         map_voro2space2(voronoi,rnodes)  # -- for each v-cell identifies the ray-paths and ray-nodes inside the influence area.
         push!(vorovec,voronoi)
     end
@@ -509,6 +521,7 @@ function initialize_model(IP,IP_fields,rnodes,evtsta,observables,rays,Gg,Gt,vnox
         sstatics = zeros(Float64,length(obs.staids))
         noise = [obs.noise_guess]
         datap = DataPConst(
+            obs.obsname,
             estatics,
             sstatics,
             noise
@@ -521,7 +534,7 @@ function initialize_model(IP,IP_fields,rnodes,evtsta,observables,rays,Gg,Gt,vnox
         fieldslist, 
         vorovec, 
         zeros(Float64,1), 
-        zeros(Float64,length(observables.obslist)),
+        zeros(Float64,length(observables.Obs)),
         [1.0],
         [1],
         dataspace
@@ -540,7 +553,7 @@ function initialize_paths(paths,paths_list,LocalRaysManager,IP,evtsta,observable
     s_r = LocalRaysManager.ray2source_receiver
     Rmax = IP.RayTracingInit.Rmax
     if (length(s_r) != 0)
-        grid = instance_grid(evtsta, LocalRaysManager, IP)
+        grid = instance_grid(observables, evtsta, LocalRaysManager, IP)
         raytracing_dijkstra(grid, observables, LocalRaysManager, paths, evtsta, IP)
     end
     for i in axes(paths_list,1)
@@ -552,11 +565,12 @@ function initialize_paths(paths,paths_list,LocalRaysManager,IP,evtsta,observable
             event, station, phase = paths_list[i][1], paths_list[i][2], paths_list[i][3]
             evt_depth = (Rmax-R) + ievt[event,4]
             sta_depth = (Rmax-R) - ista[station,4]
+            # print("\n",event," ",station," ",phase," ",evt_depth," ",sta_depth)
             d,r,t,ϕ,λ,e = taup_path!(PathObj,String(phase),ievt[event,2],ievt[event,3],evt_depth,ista[station,2],ista[station,3],sta_depth)
             lon = deg2rad.(λ)
             lat = deg2rad.(ϕ)
             rad = Rmax .- (r)
-            paths[i] = pathConst(event,station,phase,lat,lon,rad,t)
+            paths[i] = pathConst(event,station,phase,lat,lon,rad,t,[0.0])
         end
     end
 end
@@ -692,7 +706,7 @@ function collect_phases(IP_obs)
     for obs in IP_obs
         iobs = readdlm(obs.file)
         for j in eachindex(iobs[:,1])
-            phase = iobs[j,end]
+            phase = iobs[j,4]
             push!(phases_set,phase)
         end
     end
@@ -757,6 +771,7 @@ function initialize_fitstats(model,observables,rnodes,rays,IP,Gg,Gt,vnox,nodes2r
                             obs.obsval[j] = obs.obsval[j] - mean(residuals)
                         end
                      end
+                    # model.dataspace.Obs[ii].estatics[i] = mean(residuals)
                 end
             end
         end
@@ -778,19 +793,6 @@ function initialize_fitstats(model,observables,rnodes,rays,IP,Gg,Gt,vnox,nodes2r
 
 end
 
-function raytime_1D(ray)
-    if ray.phase == "P"
-        @. ray.u = 1.0/ray.v_1D_P
-        average_velocity(ray.u_path,ray.u)
-    elseif ray.phase == "S"
-        @. ray.u = 1.0/ray.v_1D_S
-        average_velocity(ray.u_path,ray.u)
-    else
-        return 0.0
-    end
-    return sum(@. ray.L * ray.u_path)
-end
-
 function indomain(evtsta,paths_list,lims)
     evt_set = Set{Int64}()
     sta_set = Set{Int64}()
@@ -805,33 +807,6 @@ function indomain(evtsta,paths_list,lims)
         end
     end
     return evt_set, sta_set
-end
-
-function correct_polarization(rnodes,ray,nray,evtsta)
-    error("Does polarization need to be corrected?") # it seems it does, at least for SPECFEM data
-    # Polarization angle is defined in ray-aligned QTL coordinates and should be constant along the ray!
-    # To compute S-wave velocities and splitting intensities, we need the angle between the S-wave
-    # polarization azimuth (in the QT-plane) and the projection of the hexagonal symmetry axis into the QT-plane.
-    # The polarization azimuth only needs to be corrected if we are computing this angle in some other coordinate
-    # system.
-    # nodes = rnodes.r2n[nray][1]:rnodes.r2n[nray][end]
-	# sas = Vector{Float64}()
-	# a, f = 6371.0, 0.0
-    # n1,n2 = nodes[1],nodes[end]
-    # lat2, lon2 =  asin(rnodes.c[3,n1]/rnodes.r[1,n1]), atan(rnodes.c[2,n1],rnodes.c[1,n1])
-	# for k in nodes
-    #     lat1,lon1 = asin(rnodes.c[3,k]/rnodes.r[1,k]),atan(rnodes.c[2,k],rnodes.c[1,k])
-	# 	dist, az, baz = Geodesics.inverse(((lon1,lat1,lon2,lat2))...,a,f)
-	# 	if ((3pi/2 - az) > pi)
-	# 		push!(sas,(3pi/2 - az) - pi)
-	# 	else
-	# 		push!(sas,(3pi/2 - az))
-	# 	end
-	# end
-    # # BPV lazily removed polarization 'correction'. No adjustment for ray orientation.
-	# for k = 1:length(nodes)
-	# 	ray.ζ[k] = ray.ζ[k]  + sas[k] - ray.ϕ[k]
-	# end
 end
 
 function rotation_matrices(φ,θ)
@@ -852,12 +827,57 @@ function rotation_matrices(φ,θ)
     return Rx,Ry
 end
 
-function rotate_basis(v1,v2,v3,Rx,Ry)
-    R = Ry*Rx
-    for i in eachindex(v1)
-        b = inv(R)*[v1[i],v2[i],v3[i]]
-        v1[i], v2[i], v3[i] = b[1], b[2], b[3]
+function load_topography(IP)
+    filename = IP.RayTracingInit.topography_file 
+    nnodes = IP.RayTracingInit.nnodes
+    if filename == ""
+        print("\nno topography file loaded\n")
+        return zeros(Float64,1,1), false
+    else
+        file = readdlm("$filename")
+        longitude_range = rad2deg.(range(IP.lims.lon[1],IP.lims.lon[2],length=nnodes[2]))
+        latitude_range = rad2deg.(range(IP.lims.lat[1],IP.lims.lat[2],length=nnodes[1]))
+        
+        topography = zeros(Float64,nnodes[1],nnodes[2])
+
+        geo_grid = zeros(Float64,2,nnodes[1]*nnodes[2])
+        np = 0
+        for i in axes(topography,1), j in axes(topography,2)
+            np += 1
+            geo_grid[1,np] = latitude_range[i]
+            geo_grid[2,np] = longitude_range[j]
+        end
+
+        topo_lat = file[:,1]
+        topo_lon = file[:,2]
+        topo_elv = file[:,3]
+        station_file = readdlm(IP.InputSta)
+        for i in axes(station_file,1)
+            push!(topo_lat,station_file[i,2])
+            push!(topo_lon,station_file[i,3])
+            push!(topo_elv,station_file[i,4])
+        end
+        topo_scatter = permutedims(hcat(topo_lat,topo_lon))
+
+        inds = NN_interpolation(geo_grid, topo_scatter)
+        np = 0
+        for i in axes(topography,1), j in axes(topography,2)
+            np += 1
+            topography[i,j] = topo_elv[inds[np]]
+        end
+        return topography, true
     end
 end
 
-
+function v_dist_val(v,vals)
+    min_ind = zero(Int64)
+    min_dist = Inf
+	for i in eachindex(vals)
+		distance = (v - vals[i])^2 
+        if distance < min_dist
+           min_dist = distance
+           min_ind = i
+        end
+    end
+    return min_ind
+end

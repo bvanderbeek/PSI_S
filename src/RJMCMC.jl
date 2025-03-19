@@ -69,12 +69,9 @@ function run_psi_s(ichunk, P::Dict, IP_fields::Vector{fieldinfo}, IP::IPConst, r
     end
 
     # -- generalized inverse matrices for static inversions and PT utilities
-    Gg,Gt = static_generalized_inverse(IP,observables)
-    if Gt' == zeros(Float64,1,1)
-        statics_status = false
+    Gg, Gt, statics_status = static_generalized_inverse(IP,observables)
+    if !statics_status
         print("\nno static corrections\n")
-    else
-        statics_status = true
     end
     temperatures = Float64[]
     temp_ind = Int64[]
@@ -128,6 +125,7 @@ function run_psi_s(ichunk, P::Dict, IP_fields::Vector{fieldinfo}, IP::IPConst, r
         if LocalRaysManager.status && (ii < sub_samples)
             rnodes = raytracing(rays,LocalRaysManager,MarkovChains,observables,evtsta,IP;it=ii)
             vnox,nodes2rays,rays2nodes,rays_outdom = vereornox(rays,rnodes)
+            Gg, Gt = reinitialize_statics(MarkovChains,observables,IP)
             reinitialize_models(ObjsInChains,rnodes,rays,observables,Gg,Gt,IP,nchains,vnox,nodes2rays,rays2nodes,rays_outdom)
         end
     end
@@ -142,7 +140,7 @@ function run_psi_s(ichunk, P::Dict, IP_fields::Vector{fieldinfo}, IP::IPConst, r
     @. TMatrix = TMatrix / DMatrix
 
     if ichunk == 1
-        save(string(run_directory, "/psi_s_utilities.jld"), "rnodes", rnodes, "observables", observables, "TransitionMatrix", TMatrix)
+        save(string(run_directory, "/psi_s_utilities.jld"), "rnodes", rnodes, "observables", observables, "TransitionMatrix", TMatrix, "evtsta", evtsta)
     end
 
     return nothing
@@ -173,12 +171,9 @@ function run_RJMCMC(wrk_dir, name, chain_id)
     end
 
     # -- generalized inverse matrices for static inversions and PT utilities
-    Gg,Gt = static_generalized_inverse(IP,observables)
-    if Gt' == zeros(Float64,1,1)
-        statics_status = false
+    Gg, Gt, statics_status = static_generalized_inverse(IP,observables)
+    if !statics_status
         print("\nno static corrections\n")
-    else
-        statics_status = true
     end
     temperatures = Float64[]
     temp_ind = Int64[]
@@ -232,6 +227,7 @@ function run_RJMCMC(wrk_dir, name, chain_id)
         if LocalRaysManager.status && (ii < sub_samples)
             rnodes = raytracing(rays,LocalRaysManager,MarkovChains,observables,evtsta,IP;it=ii)
             vnox,nodes2rays,rays2nodes,rays_outdom = vereornox(rays,rnodes)
+            Gg, Gt = reinitialize_statics(MarkovChains,observables,IP)
             reinitialize_models(ObjsInChains,rnodes,rays,observables,Gg,Gt,IP,nchains,vnox,nodes2rays,rays2nodes,rays_outdom)
         end
     end
@@ -245,7 +241,7 @@ function run_RJMCMC(wrk_dir, name, chain_id)
 
     @. TMatrix = TMatrix / DMatrix
 
-    save(string(wrk_dir, "/output/", name, "/", name, "_utilities.jld"), "rnodes", rnodes,"observables",observables,"TransitionMatrix",TMatrix)
+    save(string(wrk_dir, "/output/", name, "/", name, "_utilities.jld"), "rnodes", rnodes,"observables",observables,"TransitionMatrix",TMatrix,"evtsta",evtsta)
 
 
 end

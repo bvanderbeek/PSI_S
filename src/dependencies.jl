@@ -16,6 +16,7 @@ using SharedArrays
 using MiniQhull
 using LinearAlgebra
 using SparseArrays
+using Polyhedra
 using TOML
 # Post-processing
 using LazyArrays

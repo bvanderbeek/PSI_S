@@ -24,7 +24,7 @@ struct MonteCarloSolver
     saveint::Int64
 end
 function MonteCarloSolver(D::Dict)
-    return MonteCarloSolver(D["LX_norm"], D["num_iterations"], D["num_chains"], D["nn_algorithm"], D["pert_size"],
+    return MonteCarloSolver(D["l_norm"], D["num_iterations"], D["num_chains"], D["nn_algorithm"], D["pert_size"],
         D["vpert_iterations"], D["dim_prior"], D["max_dim"], D["init_dim"], D["tf_hierarchical"], D["tf_rand_init"],
         D["tf_squeeze"], D["print_interval"], D["save_interval"])
 end
@@ -71,6 +71,8 @@ struct RayTracing
     perturb::Bool
     carving::Bool
     sub_its::Int64
+    topography_file::String
+    velmod_shift::Bool
 end
 function RayTracing(D::Dict)
     if D["tf_1D_rays"]
@@ -80,15 +82,21 @@ function RayTracing(D::Dict)
         Rmodel = 6371.0
     end
     return RayTracing(D["sampling_interval"], D["interp_method"], D["taup_model"], D["tf_1D_rays"], Rmodel,
-        D["grid_dims"], D["forward_star"], D["tf_grid_noise"], D["tf_grid_carve"], D["tracing_interval"])
+        D["grid_dims"], D["forward_star"], D["tf_grid_noise"], D["tf_grid_carve"], D["tracing_interval"],
+        D["topography_file"], D["tf_hang_model"])
 end
 
 struct EarthquakesRelocation
     relocate::Bool
+    relocations_init::Bool
+    relocations_pause::Int64
     relocations_its::Int64
+    fw_reloc::Int64
+    wadati_init::Bool
 end
 function EarthquakesRelocation(D::Dict)
-    return EarthquakesRelocation(D["tf_run_relocation"], D["relocation_interval"])
+    return EarthquakesRelocation(D["tf_run_relocation"], D["tf_initial_1D_relocation"], D["first_relocation"],
+    D["relocation_interval"], D["search_width"], D["tf_wadati_init"])
 end
 
 struct Bayesian4Dimaging
@@ -136,6 +144,7 @@ struct Voronoi
 end
 
 struct DataPConst
+    obsname::String
     estatics::Vector{Float64}
     sstatics::Vector{Float64}
     noise::Vector{Float64}
@@ -174,8 +183,8 @@ struct ObsConst                         # -- Observable
     noise_guess::Float64                # -- noise guess (used to scale the hierarchical proposal)
     ray2obs::Dict{Int64, Int64}         # -- maps the ray-number of the observation in this structure
     demean::Bool
-    solve_evt::Bool                     # -- it only saves if you are inverting for event statics for this obs
-    solve_sta::Bool                     # -- it only saves if you are inverting for station statics for this obs
+    solve_evt::Int64                    # -- it only saves if you are inverting for event statics for this obs
+    solve_sta::Int64                    # -- it only saves if you are inverting for station statics for this obs
 end
 
 struct ObservablesConst                 # -- House of the Observables
@@ -268,8 +277,8 @@ struct obsinfo
     name::String
     file::String
     demean::Bool
-    eventstatics::Bool
-    stationstatics::Bool
+    eventstatics::Int64
+    stationstatics::Int64
     noise_guess::Float64
     forward_name::String
     # ... ?
@@ -298,6 +307,8 @@ struct LocalRaysManagerConst
     receiv_nodes::Dict{Int64,Int64}
     sub_its::Int64
     relocations::Bool
+    topography_status::Bool
+    topography::Matrix{Float64}
 end
 
 mutable struct ObjsInChainConst
@@ -337,6 +348,7 @@ struct pathConst
     lon::Vector{Float64}
     rad::Vector{Float64}
     t::Vector{Float64}
+    sp_t::Vector{Float64}
 end
 
 function copy_model(model,update)

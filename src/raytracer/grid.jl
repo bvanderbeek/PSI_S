@@ -7,11 +7,22 @@ struct GridConst
     r::Vector{Float64}
     Vp::Vector{Float64}
     Vs::Vector{Float64}
+    ε::Vector{Float64}
+    δ::Vector{Float64}
+    n1::Vector{Float64}
+    n2::Vector{Float64}
+    n3::Vector{Float64}
+    vecef1::Vector{Float64}
+    vecef2::Vector{Float64}
+    vecef3::Vector{Float64}
     fw_level::Int64
     nnodes::Vector{Int64}
     nxny::Int64
     dmin::Float64
     perturbed::Bool
+    σ::Vector{Float64}
+    estatics::Vector{Vector{Float64}}
+    sstatics::Vector{Vector{Float64}}
 end
 
 struct Velocity4DGridConst
@@ -28,27 +39,10 @@ struct Velocity4DGridConst
     nnodes::Vector{Int64}
     nxny::Int64
     upscale::Float64
+    σ::Vector{Float64}
 end
 
-function copy_grid(grid)
-    return GridConst(
-        grid.x,
-        grid.y,
-        grid.z,
-        grid.θ,
-        grid.φ,
-        grid.r,
-        copy(grid.Vp),
-        copy(grid.Vs),
-        grid.fw_level,
-        grid.nnodes,
-        grid.nxny,
-        grid.dmin,
-        grid.perturbed,
-    )
-end
-
-function instance_grid(evtsta, raytracer, IP)
+function instance_grid(observables, evtsta, raytracer, IP)
     lims = IP.lims
     refm = readdlm(IP.velocitymodel,' ',Float64,'\n')   # -- reads the reference 1D velocity model
 
@@ -119,7 +113,14 @@ function instance_grid(evtsta, raytracer, IP)
         dmin = minimum([dy,dz])
     end
 
-    gr = GridConst(x, y, z, θ, φ, r, vp, vs, fw_level, [nn1,nn2,nn3], nn1*nn2, dmin, perturb)
+    grid_data_noise = zeros(Float64,length(observables.Obs))
+    grid_estatics = Vector{Vector{Float64}}()
+    grid_sstatics = Vector{Vector{Float64}}()
+    for iobs in eachindex(observables.Obs)
+        push!(grid_estatics,zeros(Float64,length(evtsta.evts)))
+        push!(grid_sstatics,zeros(Float64,length(evtsta.stas)))
+    end
+    gr = GridConst(x, y, z, θ, φ, r, vp, vs, Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), fw_level, [nn1,nn2,nn3], nn1*nn2, dmin, perturb, grid_data_noise, grid_estatics, grid_sstatics)
 
     for  k in eachindex(rp), j in eachindex(φp), i in eachindex(θp)
         push!(gr.θ,θp[i])
@@ -132,13 +133,22 @@ function instance_grid(evtsta, raytracer, IP)
         push!(gr.z,zt)
         push!(gr.Vp,0.0)
         push!(gr.Vs,0.0)
+        push!(gr.ε,0.0)
+        push!(gr.δ,0.0)
+        push!(gr.n1,0.0)
+        push!(gr.n2,0.0)
+        push!(gr.n3,0.0)
+        push!(gr.vecef1,0.0)
+        push!(gr.vecef2,0.0)
+        push!(gr.vecef3,0.0)
     end
 
     # -- perturbs primary grid's nodal positions
     if perturb
-        σs = [1,2,3,4]
+        σ = [1,1,1]
+        # σs = [1,2,3,4]
         for i in eachindex(gr.x)
-            σ = rand(σs,3)
+            # σ = rand(σs,3)
             # -- if uniform_noise
                 pert_θ = rand()*dθ/σ[1] - dθ/σ[1]/2
                 pert_φ = rand()*dφ/σ[2] - dφ/σ[2]/2
@@ -158,6 +168,7 @@ function instance_grid(evtsta, raytracer, IP)
     end
     
     # -- moves grid points to concide with events and stations' positions
+    recst_nodes = Set{Int64}()
     for id in raytracer.local_evts
         evt = evtsta.evts[id]
         # xe, ye, ze = @cartesian(evt.lat, evt.lon, R + evt.depth)
@@ -166,6 +177,7 @@ function instance_grid(evtsta, raytracer, IP)
         gr.x[ind], gr.y[ind], gr.z[ind] = xe, ye, ze
         gr.θ[ind], gr.φ[ind], gr.r[ind] = evt.lat, evt.lon, R + evt.depth
         source == "evt" ? raytracer.source_nodes[id] = ind : raytracer.receiv_nodes[id] = ind
+        push!(recst_nodes,ind)
     end
     for id in raytracer.local_stats
         sta = evtsta.stas[id]
@@ -175,6 +187,7 @@ function instance_grid(evtsta, raytracer, IP)
         gr.x[ind], gr.y[ind], gr.z[ind] = xs, ys, zs
         gr.θ[ind], gr.φ[ind], gr.r[ind] = sta.lat, sta.lon, R + sta.elevation
         source == "evt" ? raytracer.receiv_nodes[id] = ind : raytracer.source_nodes[id] = ind
+        push!(recst_nodes,ind)
     end
 
     # minimum_dist(grid)
@@ -182,6 +195,26 @@ function instance_grid(evtsta, raytracer, IP)
     for i in eachindex(gr.r)
         gr.Vp[i] = ref_V1D(gr.r[i],refm[:,[1,2]])
         gr.Vs[i] = ref_V1D(gr.r[i],refm[:,[1,3]])
+        (i in recst_nodes) && continue
+        if raytracer.topography_status
+            lon, lat = gr.φ[i], gr.θ[i]
+            # latid, lonid = v_dist_val(lat,θp), v_dist_val(lon,φp)
+            latid = fast_v_dist(lat,θmin,dθ)
+            lonid = fast_v_dist(lon,φmin,dφ)
+            h = raytracer.topography[latid,lonid]
+            if (gr.r[i]-R) > raytracer.topography[latid,lonid]
+                gr.Vp[i], gr.Vs[i] = 0.0, 0.0
+            else
+                gr.Vp[i] = ref_V1D(gr.r[i]-h,refm[:,[1,2]])
+                gr.Vs[i] = ref_V1D(gr.r[i]-h,refm[:,[1,3]])
+            end
+        end
+    end
+    # print("\n...topography applied...\n")
+
+    for iobs in eachindex(observables.Obs)
+        obs = observables.Obs[iobs]
+        gr.σ[iobs] = obs.noise_guess
     end
 
     return gr
@@ -229,9 +262,9 @@ function compute_distance(x1,y1,z1,x2,y2,z2)
     return sqrt((x1-x2)^2+(y1-y2)^2+(z1-z2)^2)
 end 
 
-function instance_velocity_grid(evtsta,raytracer, IP, chains)
+function instance_velocity_grid(observables,evtsta,raytracer, IP, chains)
     lims = IP.lims
-    refm = readdlm(string("../../VelocityModels/",IP.velocitymodel),' ',Float64,'\n')   # -- reads the reference 1D velocity model
+    refm = readdlm(IP.velocitymodel,' ',Float64,'\n')   # -- reads the reference 1D velocity model
 
     vel_nnodes, time_steps = 64000, 50
 
@@ -273,7 +306,7 @@ function instance_velocity_grid(evtsta,raytracer, IP, chains)
         push!(Vs,Float64[])
     end
 
-    gr = Velocity4DGridConst(θp, φp, rp, tp, x, y, z, r, Vp, Vs, nnodes, nn1*nn2, upscale)
+    gr = Velocity4DGridConst(θp, φp, rp, tp, x, y, z, r, Vp, Vs, nnodes, nn1*nn2, upscale, zeros(Float64,length(observables.Obs)))
 
     for  k in eachindex(rp), j in eachindex(φp), i in eachindex(θp)
         # xt, yt, zt = @cartesian(θp[i],φp[j],rp[k])
@@ -290,7 +323,12 @@ function instance_velocity_grid(evtsta,raytracer, IP, chains)
         end
     end
 
-    fill_4Dgrid(gr,chains)
+    for iobs in eachindex(observables.Obs)
+        obs = observables.Obs[iobs]
+        gr.σ[iobs] = obs.noise_guess
+    end
+
+    fill_4Dgrid(gr,chains,IP)
 
     return gr
 
@@ -336,4 +374,19 @@ function evtt_extremes(evtsta)
         push!(T0s,evt.T0)
     end
     return minimum(T0s), maximum(T0s)
+end
+
+function fast_v_dist(t,tmin,dt)
+        t = t-tmin
+        i = floor(t/dt) + 1
+        p = i + floor((t-dt*(i-1))/(dt/2))
+    return Int64(p)
+end
+
+function mask_topography(grid,visited)
+    for i in eachindex(grid.Vp)
+        if grid.Vp == 0
+            visited[i] = 1
+        end
+    end
 end

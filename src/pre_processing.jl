@@ -6,8 +6,8 @@ using Printf
 # for every event-station-phase pair. It will return a boolean vector (kbad) that is true
 # at the indices of arrivals that could not be predicted, a modified list of phase names
 # (phase_out), and the distance (dist) and back-azimuth (baz) of the arrivals.
-function check_data(Events, Stations, Data, ref_model; tf_extended_9km = false)
-    dR = tf_extended_9km ? 9.0 : 0.0
+function check_data(Events, Stations, Data, ref_model; dR = 0.0)
+    tf_extended = dR > 0.0
     nobs = length(Data.observation)
     kbad = falses(nobs)
     tt, dist, baz, phase_out = zeros(nobs), zeros(nobs), zeros(nobs), Vector{String}(undef, nobs)
@@ -16,8 +16,8 @@ function check_data(Events, Stations, Data, ref_model; tf_extended_9km = false)
     TimeObj = buildTimeObj(ref_model)
     for (k, phase_k) in enumerate(Data.phase)
         # If using extended model, modify surface reflected phase names accordingly (e.g. pP becomes p^9P)
-        if tf_extended_9km
-            tf_surf_refl = (length(phase_k) > 1) && (phase_k[1] == "p" || phase_k[1] == "s")
+        if tf_extended
+            tf_surf_refl = (length(phase_k) > 1) && (phase_k[1:2] == "pP" || phase_k[1:2] == "sS")
             tf_surf_refl && (phase_k = phase_k[1]*"^9"*phase_k[2:end])
         end
         phase_out[k] = phase_k
@@ -29,7 +29,7 @@ function check_data(Events, Stations, Data, ref_model; tf_extended_9km = false)
         sta_lat, sta_lon, sta_elv = Stations.latitude[j_sta], Stations.longitude[j_sta], Stations.elevation[j_sta]
         dist[k], baz[k] = TauP.taup_geoinv(sta_lat, sta_lon, evt_lat, evt_lon)
         # Predict travel_time
-        evt_dpt, sta_dpt = tf_extended_9km ? (dR - evt_elv, dR - sta_elv) : (-evt_elv, 0.0)
+        evt_dpt, sta_dpt = tf_extended ? (dR - evt_elv, dR - sta_elv) : (-evt_elv, 0.0)
         tt_k, _ = taup_time!(TimeObj, phase_k, dist[k], evt_dpt, sta_dpt)
         if isnan(tt_k)
             phase_alt = (dist[k] >= 160.0) && (phase_k == "P") ? "PKIKP" : AltPhase[phase_k] # AD-HOC ASSUMPTION!!!
@@ -165,7 +165,7 @@ end
 function write_psi_s_events(out_file, Events)
     io = open(out_file, "w")
     for k in eachindex(Events.id)
-        @printf(io, "%5i %12.6f %12.6f %12.6f \n", k, Events.latitude[k], Events.longitude[k], -Events.elevation[k]) # Depth!
+        @printf(io, "%5i %12.6f %12.6f %12.6f %12.6f \n", k, Events.latitude[k], Events.longitude[k], -Events.elevation[k], 0.0) # Depth and a null origin time
     end
     close(io)
     return nothing

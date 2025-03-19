@@ -1,3 +1,35 @@
+# Start Gianmarco Forward Functions in v1.5
+# -- S-wave isotropic travel time with relative perturbation dlnVp, ratio Vp/Vs and hexagonal anisotropy (spherical)
+function tt_S_dlnVs_Vp2Vs_fp_psi_gamma(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
+    dlnVs = get_field("dlnVp",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    Vp2Vs = get_field("Vp2Vs",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    fp = get_field("fp",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    psi = get_field("psi",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    gamma = get_field("gamma",raytmp.fields,rays2nodes,rays_outdom,nray,model) 
+    c_S_dlnVp_Vp2Vs_fp_psi_gamma(raytmp,nray,vnox,rays2nodes,dlnVp,Vp2Vs,fp,psi,gamma)
+    average_velocity(raytmp,rays2nodes,nray)
+    for (i,j) in enumerate(rays2nodes[1,nray]:rays2nodes[2,nray]-1)
+        raytmp.dt[i] = vnox[11,j] * raytmp.u_path[i]
+    end
+    pred[obs.ray2obs[nray]] = sum(raytmp.dt) - obs.ref_t[obs.ray2obs[nray]]
+end
+function c_S_dlnVp_Vp2Vs_fp_psi_gamma(raytmp,nray,vnox,rays2nodes,dlnVp,Vp2Vs,fp,psi,gamma)
+    ϕ = @view vnox[8,rays2nodes[1,nray]:rays2nodes[2,nray]]
+    θ = @view vnox[9,rays2nodes[1,nray]:rays2nodes[2,nray]]
+    ζ = @view vnox[10,rays2nodes[1,nray]:rays2nodes[2,nray]]
+    v_1D_P = @view vnox[6,rays2nodes[1,nray]:rays2nodes[2,nray]]
+    v_1D_S = @view vnox[7,rays2nodes[1,nray]:rays2nodes[2,nray]]
+    @inbounds for i in eachindex(dlnVp)
+        cos2α = 2*(cos(θ[i])*cos(gamma[i])*cos(ϕ[i]-psi[i])+sin(θ[i])*sin(gamma[i]))^2-1.0
+        β = atan(-sin(ϕ[i]-psi[i])*cos(gamma[i])/(cos(ϕ[i]-psi[i])*sin(θ[i])*cos(gamma[i])-cos(θ[i])*sin(gamma[i]))) - ζ[i]
+        fsh = fp[i]*0.63
+        fsv = fsh/(-4.75)
+        raytmp.u[i] = ((sin(β)^2)/(1.0+fsh*cos2α) + (cos(β)^2)*(1.0+(fsv))/((1.0+fsh)*(1.0+(fsv)*(2(cos2α)^2-1.0))))/((v_1D_P[i]*(1.0+dlnVp[i]))/Vp2Vs[i])
+    end
+end
+# End Gianmarco Forward Functions in v1.5
+
+
 # -- S-wave isotropic travel time with absolute Vs
 function tt_S_Vs(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs) 
     Vs = get_field("Vs",raytmp.fields,rays2nodes,rays_outdom,nray,model)

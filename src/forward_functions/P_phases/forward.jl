@@ -6,6 +6,54 @@
 # Then, within each forward function, you can call the above methods with the appropriate inputs
 # This should reduce some redundancy and probability of errors
 
+# Start Gianmarco Forward Functions in v1.5
+# -- P-wave anisotropic travel time with relative perturbation dlnVp and radial anisotropy (spherical parametrization)
+function tt_P_dlnVp_fp(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
+    dlnVp = get_field("dlnVp",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    fp = get_field("fp",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    c_P_dlnVp_fp(raytmp,nray,vnox,rays2nodes,dlnVp,fp)
+    average_velocity(raytmp,rays2nodes,nray)
+    for (i,j) in enumerate(rays2nodes[1,nray]:rays2nodes[2,nray]-1)
+        raytmp.dt[i] = vnox[11,j] * raytmp.u_path[i]
+    end
+    pred[obs.ray2obs[nray]] = sum(raytmp.dt) - obs.ref_t[obs.ray2obs[nray]]
+end
+function c_P_dlnVp_fp(raytmp,nray,vnox,rays2nodes,dlnVp,fp)
+    θ = @view vnox[9,rays2nodes[1,nray]:rays2nodes[2,nray]]
+    v_1D_P = @view vnox[6,rays2nodes[1,nray]:rays2nodes[2,nray]]
+    @inbounds for i in eachindex(dlnVp)
+        raytmp.u[i] = 1.0/((1.0 + fp[i]*(2*(sin(θ[i]))^2-1.0))*(1.0 + dlnVp[i])*v_1D_P[i])
+    end
+end
+
+# -- P-wave anisotropic travel time with relative perturbation dlnVp and hexagonal anisotropy (MAV parametrization)
+function tt_P_dlnVp_fp_psi_v3(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
+    dlnVp = get_field("dlnVp",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    fp = get_field("fp",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    psi = get_field("psi",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    v3 = get_field("v3",raytmp.fields,rays2nodes,rays_outdom,nray,model) 
+    c_P_dlnVp_fp_psi_v3(raytmp,nray,vnox,rays2nodes,dlnVp,fp,psi,v3)
+    average_velocity(raytmp,rays2nodes,nray)
+    for (i,j) in enumerate(rays2nodes[1,nray]:rays2nodes[2,nray]-1)
+        raytmp.dt[i] = vnox[11,j] * raytmp.u_path[i]
+    end
+    pred[obs.ray2obs[nray]] = sum(raytmp.dt) - obs.ref_t[obs.ray2obs[nray]]
+end
+function c_P_dlnVp_fp_psi_v3(raytmp,nray,vnox,rays2nodes,dlnVp,fp,psi,v3)
+    ϕ = @view vnox[8,rays2nodes[1,nray]:rays2nodes[2,nray]]
+    θ = @view vnox[9,rays2nodes[1,nray]:rays2nodes[2,nray]]
+    v_1D_P = @view vnox[6,rays2nodes[1,nray]:rays2nodes[2,nray]]
+    @inbounds for i in eachindex(dlnVp)
+        gamma = asin(v3[i])
+        raytmp.u[i] = 1.0/((1.0 + fp[i]*(2*(cos(θ[i])*cos(gamma)*cos(ϕ[i]-psi[i])+sin(θ[i])*sin(gamma))^2-1.0))*(1.0 + dlnVp[i])*v_1D_P[i])
+    end
+end
+
+# Note! The tt_aniso_P_th amd tt_aniso_P_th_ell functions are deprecated by tt_P_dlnVp_fp_psi_gamma_thomsen
+# Did not include tt_aniso_P_th_crack because parameters are too specific to a particular DEM model
+# End Gianmarco Forward Functions in v1.5
+
+
 # -- P-wave isotropic travel time with absolute Vp
 function tt_P_Vp(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs) 
     Vp = get_field("Vp",raytmp.fields,rays2nodes,rays_outdom,nray,model)
