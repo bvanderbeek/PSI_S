@@ -1,4 +1,4 @@
-# PSI_S - Plateform for Seismic Imaging, Stochastic
+# PSI_S - Platform for Seismic Imaging, Stochastic
 
 Julia software for the probabilisitc inversion of body wave observables (P, S travel-times, splitting intensity) for (an)isotropic Earth models using the reversible jump Markov Chain Monte Carlo algorithm.
 
