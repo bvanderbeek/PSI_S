@@ -22,4 +22,4 @@ include(ENV["PSI_S"]*"/src/plotting_library.jl") # Load plotting functions
 parameter_file, istart = ARGS[1], parse(Int64, string(ARGS[2]))
 
 # Plot Chain Metrics #
-plot_chain_metrics(ARGS[1]; istart = istart, tf_display_figures = false, tf_print = true)
+plot_chain_metrics(parameter_file; istart = istart, tf_display_figures = false, tf_print = true)

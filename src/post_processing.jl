@@ -4,7 +4,6 @@
 # because loading graphics packagaes can be problematic on clusters.
 # - BPV
 # include(@__DIR__() * "/dependencies.jl") # I live in the src directory
-using Distributions
 
 #################
 # CHAIN METRICS #
@@ -16,26 +15,33 @@ using Distributions
 # + Single RMS value or stored seperately for each observation type?
 # + A noise parameter for each observation type
 struct ChainMetrics{I, F, S}
+    obs::Dict{I, S} # Observable index (key) and name (val); assumes indexing of observables does not change across each iteration
+    fields::Dict{S, I} # Field names (key) and index (val); assumes indexing of fieldslist does not change across each iteration
     iteration::Vector{I} # Iteration in chain
     num_accepted::Vector{I} # Number of accepted proposals at each iteration
     fobj::Vector{F} # Objective function
-    rrms::Vector{F} # Root-mean-squared observation residual; assumed to be in seconds; what about joint inversion of different measurement units?
-    pnoise::Vector{F} # Noise parameter; assumed to be in seconds
-    fields::Dict{S, I} # Field names (key) and index (val); assumes indexing of fieldslist does not change across each iteration
+    rrms::Array{F,2} # Root-mean-squared observation residual for each observable (columns) at each iteration (rows)
+    pnoise::Array{F,2} # Noise parameter for each observable (columns) at each iteration (rows)
     num_cells::Array{I,2} # Number of Voronoi cells in each field (columns) at each iteration (rows)
     # ADDITIONAL FIELDS
     # norm_field::Array{F,2} # Norm of each field?
     # norm_event_statics::Array{F,2} # (iteration, data type); ModelConst.dataspace.Obs[i].estatics
 end
 function ChainMetrics(Chain::Vector{ModelConst}; nsaved = 1)
+    N = length(Chain[1].dataspace.Obs) # Number of observables
     L, F = length(Chain), Chain[1].nfields # Length of chain and number of fields (N, P)
-    CM = ChainMetrics(zeros(Int, L), zeros(Int, L), zeros(L), zeros(L), zeros(L), Chain[1].fieldslist, zeros(Int, L, F))
+    # Construct observable dictionary
+    obs = Dict{Int, String}()
+    [obs[i] = B.obsname for (i, B) in enumerate(Chain[1].dataspace.Obs)]
+    CM = ChainMetrics(obs, Chain[1].fieldslist, zeros(Int, L), zeros(Int, L), zeros(Float64, L), zeros(Float64, L, N), zeros(Float64, L, N), zeros(Int, L, F))
     for (i, chain_i) in enumerate(Chain)
         CM.iteration[i] = (i - 1)*nsaved
         CM.num_accepted[i] = chain_i.accepted[1]
         CM.fobj[i] = chain_i.misfit[1]
-        CM.rrms[i] = chain_i.rms[1]
-        CM.pnoise[i] = chain_i.dataspace.Obs[1].noise[1]
+        for j in 1:N
+            CM.rrms[i,j] = chain_i.rms[j]
+            CM.pnoise[i,j] = chain_i.dataspace.Obs[j].noise[1]
+        end
         for j in 1:F
             CM.num_cells[i,j] = chain_i.fields[j].n[1]
         end
@@ -631,7 +637,7 @@ function posterior_directional_moments(num_chains, num_burn, query_points, direc
     post_vectors = zeros(3, 3, num_pts) # Principal vectors (3-components, 3-vectors)
     post_moments = zeros(num_moments, num_pts, 3 + num_pairs) # Moments for (1) fraction, (2) projected magnitude, (3) angular deviation, and correlation fields
     post_correlation = zeros(1, num_pts, num_pairs) # Sample correlation products with projected magnitude
-    directional_strength = zeros(1, num_pts) # Container for directional strength (i.e. projected magnitude) calculations
+    directional_strength = zeros(1, num_pts) # Container for directional strength (i.e. projected magnitude) calculations...equivalent to post_moments[1,:,2]?
 
     # Build directional tensor
     num_models = 0
@@ -665,6 +671,7 @@ function posterior_directional_moments(num_chains, num_burn, query_points, direc
         println("Finished moment accumulation for chain "*string(n)*" of "*string(num_chains)*"...")
     end
     # Finish moment calculations
+    # Note! Consider weighting angular deviation moments by anisotropic strength (see also note in  accumulate_directional_moments!)
     fill_field_moments!(post_moments, num_models)
     if num_pairs > 0
         # Update list of field names
@@ -740,16 +747,19 @@ function accumulate_directional_moments!(post_moments, directional_strength, maj
         v1, v2, v3 = major_axis[1,j], major_axis[2,j], major_axis[3,j]
         # Metrics
         u0, v0 = sqrt((u1^2) + (u2^2) + (u3^2)), sqrt((v1^2) + (v2^2) + (v3^2))
-        prj = abs(u1*v1 + u2*v2 + u3*v3) # Unsigned dot-product
-        cos2Δ = 2.0*((prj/(u0*v0))^2) - 1.0 # Angular deviation with principal orientation; cos2Δ = 2.0*(cosΔ^2) - 1.0
-        prj /= v0 # Projected magnitudes on major axis...or use √prj <--- Compute dlnV correlation with this field???
+        prj, puv0 = abs(u1*v1 + u2*v2 + u3*v3), u0*v0 # Unsigned dot-product
+        cos2Δ = puv0 > 0.0 ? 2.0*((prj/puv0)^2) - 1.0 : 1.0 # Angular deviation with principal orientation; cos2Δ = 2.0*(cosΔ^2) - 1.0
+        prj = sqrt(prj) # Projected magnitude
         # Accumulate result
         for i in axes(post_moments, 1)
             post_moments[i,j,1] += (f_j^i)
             post_moments[i,j,2] += (prj^i)
             post_moments[i,j,3] += ((0.5*acos(cos2Δ))^i)
+            # Consider weighting angular deviation by magnitude
+            # post_moments[i,j,3] += u0*((0.5*acos(cos2Δ))^i)
         end
-        directional_strength[1,j] = prj
+        # angular_weight[1,j] += u0 # Need also the sum of angular weights for each interpolation point
+        directional_strength[1,j] = prj # Directional correlation with this field
     end
 
     return nothing
@@ -1335,7 +1345,7 @@ function local_to_global_tensors!(local_tensors, xglobal)
             local_tensors[2,3,i] local_tensors[2,1,i] local_tensors[2,2,i];
         ]
         # Rotate from (0N, 0E) to (ϕ, λ)
-        R = rotation_matrix((-ϕ, λ), (2, 3))
+        R = extrinsic_rotation_matrix((-ϕ, λ), (2, 3))
         local_tensors[:,:,i] .= R*T*transpose(R)
     end
 
@@ -1411,7 +1421,7 @@ function ecef_vector(east_north_elv::NTuple{3, T}, latitude, longitude; c = π/1
     # ECEF components for vector at (0°N, 0°E)
     w = (east_north_elv[3], east_north_elv[1], east_north_elv[2])
     # Rotate to geographic position
-    R = rotation_matrix((-c*latitude, c*longitude), (2, 3))
+    R = extrinsic_rotation_matrix((-c*latitude, c*longitude), (2, 3))
     sx = R[1,1]*w[1] + R[1,2]*w[2] + R[1,3]*w[3]
     sy = R[2,1]*w[1] + R[2,2]*w[2] + R[2,3]*w[3]
     sz = R[3,1]*w[1] + R[3,2]*w[2] + R[3,3]*w[3]
@@ -1419,7 +1429,7 @@ function ecef_vector(east_north_elv::NTuple{3, T}, latitude, longitude; c = π/1
     return sx, sy, sz
 end
 
-function rotation_matrix(α, n)
+function extrinsic_rotation_matrix(α, n)
     sinα, cosα = sincos(α)
     if n == 1
         return @SMatrix [1.0 0.0 0.0; 0.0 cosα -sinα; 0.0 sinα cosα]
@@ -1432,10 +1442,10 @@ function rotation_matrix(α, n)
     end
 end
 
-function rotation_matrix(α::Tuple, n::Tuple)
+function extrinsic_rotation_matrix(α::Tuple, n::Tuple)
     R = @SMatrix [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0]
     for i in eachindex(n)
-        R = rotation_matrix(α[i],n[i])*R
+        R = extrinsic_rotation_matrix(α[i],n[i])*R
     end
     return R
 end
