@@ -26,6 +26,13 @@ end
 function build_inputs(parameter_file::String; tf_save = false, tf_serial = false)
     # Load parameter file
     P = TOML.parsefile(parameter_file)
+    if tf_save
+        println("Progress: Making output directory...")
+        run_directory = P["out_directory"]*"/"*P["run_id"]
+        mkpath(run_directory)
+        # Save copy of parameter file (do this sooner than later in case parameter file gets subsequently modified by user)
+        cp(parameter_file, run_directory*"/parameters.toml"; force = true) # Overwrite any pre-existing parameter file
+    end
     if tf_serial
         # For serial calculations we run 1 chain at a time
         num_chains = P["MonteCarloSolver"]["num_chains"]*P["MonteCarloSolver"]["num_chunks"]
@@ -33,17 +40,14 @@ function build_inputs(parameter_file::String; tf_save = false, tf_serial = false
         P["MonteCarloSolver"]["num_chunks"] = num_chains
     end
     # Build inputs
+    println("Progress: Building observation and parameter structures...")
     IP_obs = build_obslist(P["DataFields"])
     IP_fields = build_fieldslist(P["ParameterFields"])
     IP = IPConst(P)
     rnodes, rays, evtsta, observables, LocalRaysManager = initialize_IP(IP, IP_obs, IP_fields)
-    # Save inputs
+    
     if tf_save
-        # Make output directory
-        run_directory = P["out_directory"]*"/"*P["run_id"]
-        mkpath(run_directory)
-        # Save copy of parameter file
-        cp(parameter_file, run_directory*"/parameters.toml"; force = true) # Overwrite any pre-existing parameter file
+        println("Progress: Saving input structures...")
         save(
             string(run_directory, "/IPConst.jld"), "IP", IP,
             "IP_fields", IP_fields,
@@ -62,6 +66,7 @@ end
 function initialize_IP(IP, IP_obs, IP_fields)
 
     # -- conversion deg to rad for domain's boundaries
+    println("Progress: Defining voronoi diagram limits for each field...")
     @. IP.lims.lat = deg2rad(IP.lims.lat)
     @. IP.lims.lon = deg2rad(IP.lims.lon)
 
@@ -80,6 +85,7 @@ function initialize_IP(IP, IP_obs, IP_fields)
     end
 
     # -- populates event and station objects
+    println("Progress: Populating event and station structures...")
 	ievt = readdlm(IP.InputEvt)   # -- reads the events file
 	ista = readdlm(IP.InputSta)   # -- reads the stations file
     nevt = length(ievt[:,1])    # -- number of events
@@ -99,6 +105,7 @@ function initialize_IP(IP, IP_obs, IP_fields)
     evtsta = evtstaConst(evts,stas)         # -- events&stations structure is created
 
     # -- populates observables objects
+    println("Progress: Populating observable structures...")
     phases = collect_phases(IP_obs)         # -- this array collects all the seismic phases that appear in the observables provided 
     nphases = length(phases)
 
@@ -214,11 +221,14 @@ function initialize_IP(IP, IP_obs, IP_fields)
     refm = readdlm(IP.velocitymodel,' ',Float64,'\n')   # -- reads the reference 1D velocity model
     # -- search for local events/stations
     if IP.RayTracingInit.allTauP
+        println("Progress: Tracing all paths with TauP.")
         local_evts, local_stats = Set{Int64}(), Set{Int64}()
     else
+        println("Progress: Collecting local source-receivers pairs requiring 3D ray tracing.")
         local_evts, local_stats = indomain(evtsta,paths_list,IP.lims)  # -- is local ray-tracing required? (at least one event inside the inversion domain) 
     end
 
+    println("Progress: Building ray index maps...")
     ray2source_receiver = Dict{Int64,Vector{Int64}}()   # associates every ray-ID to [source_id,station_id,phase]
     pair2ray = Dict{Vector{Int64}, Int64}()         # associates every pair source-receiver to a ray-ID
     source2receivers = Dict{Int64,Vector{Int64}}()  # associates every source to the set of receivers
@@ -261,6 +271,7 @@ function initialize_IP(IP, IP_obs, IP_fields)
     (length(local_evts) != 0) && (RT_status = true)
 
     # -- Loads topography
+    println("Progress: Tracing ray paths...")
     topography, topography_status = load_topography(IP)
 
     source_nodes, receiv_nodes = Dict{Int64, Int64}(), Dict{Int64, Int64}()
@@ -270,9 +281,12 @@ function initialize_IP(IP, IP_obs, IP_fields)
     rays = Array{RayConst,1}(undef,length(paths_list))
     initialize_paths(paths,paths_list,LocalRaysManager,IP,evtsta,observables,ievt,ista,refm)
 
+    println("Progress: Building ray structures...")
     rnodes = build_rays(paths,rays,observables,evtsta,LocalRaysManager,IP,refm)
+    println("Progress: Locating ray-voronoi intersections...")
     voronoi_domain_pierce(rays,rnodes,voronoi_slims,IP)
 
+    println("Progress: Adding descriptive fields (i.e. polarization) to rays...")
     for obs in descriptive
         if obs.obsname == "polarization"
             for nray in eachindex(rays)
@@ -831,9 +845,10 @@ function load_topography(IP)
     filename = IP.RayTracingInit.topography_file 
     nnodes = IP.RayTracingInit.nnodes
     if filename == ""
-        print("\nno topography file loaded\n")
+        println("Progress: No topography file loaded.")
         return zeros(Float64,1,1), false
     else
+        println("Progress: Loading topography file...")
         file = readdlm("$filename")
         longitude_range = rad2deg.(range(IP.lims.lon[1],IP.lims.lon[2],length=nnodes[2]))
         latitude_range = rad2deg.(range(IP.lims.lat[1],IP.lims.lat[2],length=nnodes[1]))

@@ -40,19 +40,23 @@ end
 function run_psi_s(parameter_file::String, ichunk)
     # Assumes that chunks are run serially and chunk 1 saves the IPConst file
     tf_save = ichunk > 1 ? false : true
+    println("Progress: Building input structures...")
     P, _, IP_fields, IP, rnodes, rays, evtsta, observables, LocalRaysManager = build_inputs(parameter_file; tf_save = tf_save, tf_serial = false)
     run_psi_s(ichunk, P, IP_fields, IP, rnodes, rays, evtsta, observables, LocalRaysManager)
     return nothing
 end
 function run_psi_s(ichunk, P::Dict, IP_fields::Vector{fieldinfo}, IP::IPConst, rnodes, rays, evtsta, observables, LocalRaysManager)
 
+    println("Progress: Making output directory...")
     run_directory = P["out_directory"]*"/"*P["run_id"]
     mkpath(run_directory) # Make output path if it doesn't exist
     nchains = IP.MCS.nchains # -- number of gianMarkov chains
 
+    println("Progress: Building voronoi diagrams...")
     @time vnox,nodes2rays,rays2nodes,rays_outdom = vereornox(rays,rnodes)
 
     # -- divides iterations in sub-samples; accounts for parallel tempering and ray-tracing
+    println("Progress: Initializing sub-samples...")
     sub_samples, PT_samples = 1, 1
     iterations = IP.MCS.niterations
     if LocalRaysManager.status 
@@ -69,6 +73,7 @@ function run_psi_s(ichunk, P::Dict, IP_fields::Vector{fieldinfo}, IP::IPConst, r
     end
 
     # -- generalized inverse matrices for static inversions and PT utilities
+    println("Progress: Generalized inverse for statics...")
     Gg, Gt, statics_status = static_generalized_inverse(IP,observables)
     if !statics_status
         print("\nno static corrections\n")
@@ -79,6 +84,7 @@ function run_psi_s(ichunk, P::Dict, IP_fields::Vector{fieldinfo}, IP::IPConst, r
     obs_noise = zeros(Float64,nchains,length(observables.Obs))
 
     # -- distributed arrays for parallel chains
+    println("Progress: Initializing parallel chains...")
     @time ObjsInChains, MarkovChains = initialize_parallel_chains(IP,IP_fields,rnodes,evtsta,observables,rays,Gg,Gt,nchains,vnox,nodes2rays,rays2nodes,rays_outdom)
     # -- tempered utilities
     [push!(temperatures,ObjsInChains[n].model.T[1]) for n in eachindex(ObjsInChains)]
@@ -97,6 +103,7 @@ function run_psi_s(ichunk, P::Dict, IP_fields::Vector{fieldinfo}, IP::IPConst, r
     TMatrix = zeros(Float64,nchains,nchains)
     DMatrix = zeros(Float64,nchains,nchains) 
 
+    println("Progress: Defining actions...")
     actions = [1,2,3,4]
     if (IP.MCS.hierarchical == true)
 		push!(actions,5)
@@ -107,6 +114,7 @@ function run_psi_s(ichunk, P::Dict, IP_fields::Vector{fieldinfo}, IP::IPConst, r
     end
     actions, fields = SharedArray(actions), SharedArray(fields)
 
+    println("Progress: Starting rj-mcmc sampling...")
     for ii in 1:sub_samples
         for jj in 1:PT_samples
             it0 = (ii-1)*LocalRaysManager.sub_its + (jj-1)*IP.PT.intsw_its + 1
@@ -130,6 +138,7 @@ function run_psi_s(ichunk, P::Dict, IP_fields::Vector{fieldinfo}, IP::IPConst, r
         end
     end
 
+    println("Progress: Saving Markov chains...")
     for chain in 1:nchains
         MarkovChain = MarkovChains[chain]
         chain = nchains * (ichunk-1) + chain
