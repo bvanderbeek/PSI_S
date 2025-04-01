@@ -22,6 +22,7 @@ using TOML
 using LazyArrays
 using StaticArrays
 using WriteVTK
+using Distributions
 
 # Global Constants
 const R = 6371.0
