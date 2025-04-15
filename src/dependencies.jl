@@ -1,4 +1,5 @@
 # Package Dependencies
+# using TauP # Breaks multi-threading!!!
 using JLD
 using Interpolations
 using DelimitedFiles
@@ -8,7 +9,6 @@ using LazySets
 using Random
 using DataStructures
 using NearestNeighbors
-using TauP
 using Dierckx
 using Distributed
 using DistributedArrays
@@ -22,6 +22,7 @@ using TOML
 using LazyArrays
 using StaticArrays
 using WriteVTK
+using ReadVTK
 using Distributions
 
 # Global Constants

@@ -4,16 +4,14 @@
 # because loading graphics packagaes can be problematic on clusters.
 # - BPV
 # include(@__DIR__() * "/dependencies.jl") # I live in the src directory
+#
+# How to parallelize this?
+# > Multi-thread loops that do the point-wise interpolation?
 
 #################
 # CHAIN METRICS #
 #################
 
-# MISSING FEATURES!!!
-# Multi-observable inversions
-# + List of observation types
-# + Single RMS value or stored seperately for each observation type?
-# + A noise parameter for each observation type
 struct ChainMetrics{I, F, S}
     obs::Dict{I, S} # Observable index (key) and name (val); assumes indexing of observables does not change across each iteration
     fields::Dict{S, I} # Field names (key) and index (val); assumes indexing of fieldslist does not change across each iteration
@@ -258,6 +256,33 @@ function write_ensemble_vtk(vtk_file, dims, grid_points, post_moments, post_corr
     )
 
     return nothing
+end
+
+function read_ensemble_vtk(the_vtk; fields = nothing)
+    # Get vtk-file info
+    vtk = VTKFile(the_vtk)
+    point_data = get_point_data(vtk)
+
+    # User-defined fields to load? Default to all fields.
+    if isnothing(fields)
+        fields = keys(point_data)
+    end
+
+    # Read fields
+    Model = Dict{String, Array{Float64}}()
+    for field_i in fields
+        Model[field_i] = get_data_reshaped(point_data[field_i])
+    end
+
+    # Read coordinates (global cartesian)
+    dims = size(Model[fields[1]])
+    dims = length(dims) > 3 ? dims[2:4] : dims
+    point_coords = get_points(vtk)
+    Model["xgc"] = reshape(point_coords[1,:], dims)
+    Model["ygc"] = reshape(point_coords[2,:], dims)
+    Model["zgc"] = reshape(point_coords[3,:], dims)
+
+    return Model
 end
 
 # Load all Markov chains into a single array

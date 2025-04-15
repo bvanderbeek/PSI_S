@@ -2,7 +2,7 @@
 
 julia_version = "1.9.3"
 manifest_format = "2.0"
-project_hash = "a14107a14926b6dab922b5237d55da3d03ebe66e"
+project_hash = "7d495471201015d1a42f866e960b3d242c28454f"
 
 [[deps.Adapt]]
 deps = ["LinearAlgebra", "Requires"]
@@ -799,6 +799,12 @@ deps = ["ExprTools", "InteractiveUtils", "LinearAlgebra", "Random", "Requires", 
 git-tree-sha1 = "c2bc05dbc627428094d246c3237f2e389dd87ef0"
 uuid = "379f33d0-9447-4353-bd03-d664070e549f"
 version = "0.3.4"
+
+[[deps.ReadVTK]]
+deps = ["Base64", "CodecZlib", "Downloads", "LightXML", "Reexport", "VTKBase"]
+git-tree-sha1 = "9a4b57a775f730b9844c541ee814714b11b77bc5"
+uuid = "dc215faf-f008-4882-a9f7-a79a826fadc3"
+version = "0.2.4"
 
 [[deps.RecipesBase]]
 deps = ["PrecompileTools"]
