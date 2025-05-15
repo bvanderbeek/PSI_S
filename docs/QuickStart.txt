@@ -150,3 +150,31 @@
 #   This will save the ensemble Paraview model to the path defined in build_ensemble_model.jl
 #   As always, check code paths in build_ensemble_model.jl
 # Now you can load the output model file into Paraview and look around.
+
+# Common Errors:
+# TauP and Java is the biggest issue
+# Is Java installed and the binary on your search path? If not, will error.
+# Was julia started with the correct flags for calling java? If not, possible error (see TauP.jl docs)
+# Ray tracer not running in parallel...because TauP was loaded/Julia called with handle-signals=no and JULIA_COPY_STACKS = 1 (or yes)
+# 
+# Picky about 1D velocity file format; delimiter must be a *single* space
+#
+# Common errors in data files:
+# 1) Are all stations (and events for local tomo) inside model domain (also accounting for grid noise)?
+# 2) Is minimum ray length less than grid spacing?
+# 3) Are all stations/events in observation file also in the event/station file?
+# 4) Are event-station pairs in the data file unique?
+# 5) Are the event/station IDs unique?
+
+# Forward Function Naming Conventions and Inversion Parameters
+# For each dataset, you have to specify the name of the forward function that will be used to compute predictions
+# Function names follow the format, observable_phase_parameter1_parameter2_...parameterN, where 'observable'
+# is the type of observation (e.g., tt for travel-time), 'phase' is the main phase type (e.g., P for compressional body
+# wave), and 'parameter*' are the names of the parameters needed to compute the observations (e.g., Vp for
+# P-velocity or dlnVp for fractional perturbation to P-velocity). For example, the forward function used to compute
+# isotropic P-wave travel-times parameterised using fractional velocity perturbations is, tt_P_dlnVp.
+#
+# The forward function used also dictates which inversion parameters you must solve for. These are the 'parameter*'
+# in the forward function name. So for the forward function tt_P_dlnVp, the only inversion parameter is dlnVp.
+
+# Must use 1D rays (TauP) for delay time datasets
