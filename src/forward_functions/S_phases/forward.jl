@@ -1,3 +1,208 @@
+
+# ANISOTROPIC S INVERSION
+function tt_S_dlnVs_AniMag_SymAzm_SymRad_Thomsen(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
+    # Extract Views to Perturbational Fields
+    dlnVs = get_field("dlnVs",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    AniMag = get_field("AniMag",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymAzm = get_field("SymAzm",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymRad = get_field("SymRad",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+
+    # Populate raytmp with appropriate slownesses (true = principal velocity; false = splitting intensity)
+    s_slowness_thomsen_dlnVs_AniMag_SymAzm_SymElv!(raytmp,nray,vnox,rays2nodes,dlnVs,AniMag,SymAzm,SymRad,true; tf_sin_sym_elv = true)
+
+    # Compute ray segment travel-times
+    average_velocity(raytmp,rays2nodes,nray) # Ray segment averaged velocity
+    for (i,j) in enumerate(rays2nodes[1,nray]:rays2nodes[2,nray]-1)
+        raytmp.dt[i] = vnox[11,j] * raytmp.u_path[i]
+    end
+    pred[obs.ray2obs[nray]] = sum(raytmp.dt) - obs.ref_t[obs.ray2obs[nray]]
+
+    return nothing
+end
+function si_S_AniMag_SymAzm_SymRad_Thomsen(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
+    # Extract Views to Perturbational Fields
+    AniMag = get_field("AniMag",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymAzm = get_field("SymAzm",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymRad = get_field("SymRad",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+
+    # Populate raytmp with appropriate slownesses (true = principal velocity; false = splitting intensity)
+    s_slowness_thomsen_dlnVs_AniMag_SymAzm_SymElv!(raytmp,nray,vnox,rays2nodes,nothing,AniMag,SymAzm,SymRad,false; tf_sin_sym_elv = true)
+
+    # Compute ray segment travel-times
+    average_velocity(raytmp,rays2nodes,nray) # Ray segment averaged velocity
+    for (i,j) in enumerate(rays2nodes[1,nray]:rays2nodes[2,nray]-1)
+        raytmp.dt[i] = vnox[11,j] * raytmp.u_path[i]
+    end
+    pred[obs.ray2obs[nray]] = sum(raytmp.dt) # Do not difference with reference time!
+
+    return nothing
+end
+function tt_S_dlnVs_AniMag_SymAzm_SymElv_Thomsen(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
+    # Extract Views to Perturbational Fields
+    dlnVs = get_field("dlnVs",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    AniMag = get_field("AniMag",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymAzm = get_field("SymAzm",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymElv = get_field("SymRad",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+
+    # Populate raytmp with appropriate slownesses (true = principal velocity; false = splitting intensity)
+    s_slowness_thomsen_dlnVs_AniMag_SymAzm_SymElv!(raytmp,nray,vnox,rays2nodes,dlnVs,AniMag,SymAzm,SymElv,true; tf_sin_sym_elv = false)
+
+    # Compute ray segment travel-times
+    average_velocity(raytmp,rays2nodes,nray) # Ray segment averaged velocity
+    for (i,j) in enumerate(rays2nodes[1,nray]:rays2nodes[2,nray]-1)
+        raytmp.dt[i] = vnox[11,j] * raytmp.u_path[i]
+    end
+    pred[obs.ray2obs[nray]] = sum(raytmp.dt) - obs.ref_t[obs.ray2obs[nray]]
+
+    return nothing
+end
+function si_S_AniMag_SymAzm_SymElv_Thomsen(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
+    # Extract Views to Perturbational Fields
+    AniMag = get_field("AniMag",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymAzm = get_field("SymAzm",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymElv = get_field("SymRad",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+
+    # Populate raytmp with appropriate slownesses (true = principal velocity; false = splitting intensity)
+    s_slowness_thomsen_dlnVs_AniMag_SymAzm_SymElv!(raytmp,nray,vnox,rays2nodes,nothing,AniMag,SymAzm,SymElv,false; tf_sin_sym_elv = false)
+
+    # Compute ray segment travel-times
+    average_velocity(raytmp,rays2nodes,nray) # Ray segment averaged velocity
+    for (i,j) in enumerate(rays2nodes[1,nray]:rays2nodes[2,nray]-1)
+        raytmp.dt[i] = vnox[11,j] * raytmp.u_path[i]
+    end
+    pred[obs.ray2obs[nray]] = sum(raytmp.dt) # Do not difference with reference time!
+
+    return nothing
+end
+function s_slowness_thomsen_dlnVs_AniMag_SymAzm_SymElv!(raytmp,nray,vnox,rays2nodes,dlnVs,AniMag,SymAzm,SymElv,tf_principal; tf_sin_sym_elv = false)
+    # Hard-coded Thomsen Ratios
+    k_ϵ, k_δ, k_γ = 1.0, 1.0, 1.0 # Elliptical Anisotropy
+    # k_ϵ, k_δ, k_γ = -1.0, -1.3101, -0.6179 # Oceanic Lithosphere from Russell et al. 2019
+
+    # Calculation includes dlnVs?
+    tf_ref_velocity = isnothing(dlnVs)
+
+    # Compute phase velocities
+    vp_0 = @view vnox[6,rays2nodes[1,nray]:rays2nodes[2,nray]] # Reference model Vp
+    vs_0 = @view vnox[7,rays2nodes[1,nray]:rays2nodes[2,nray]] # Reference model Vs
+    RayAzm = @view vnox[8,rays2nodes[1,nray]:rays2nodes[2,nray]] # Ray azimuth
+    RayElv = @view vnox[9,rays2nodes[1,nray]:rays2nodes[2,nray]] # Ray elevation
+    PazQT = @view vnox[10,rays2nodes[1,nray]:rays2nodes[2,nray]] # Polarization azimuth in QT-plane
+    q16_15, q4_15, q2_3, q2_15 = (16.0/15.0), (4.0/15.0), (2.0/3.0), (2.0/15.0) # Fractions for computing invariant isotropic velocities
+    @inbounds for i in eachindex(AniMag)
+        # Directional components
+        sym_elv_i = tf_sin_sym_elv ? asin(SymElv[i]) : SymElv[i]
+        cosx, Δζ = symmetry_axis_cosine(SymAzm[i], sym_elv_i, RayAzm[i], RayElv[i], PazQT[i])
+        cosx2 = cosx^2
+        sinx2 = 1.0 - cosx2
+        # Interpret dlnVs as a perturbation to the invariant isotropic velocity
+        vs_i = tf_ref_velocity ? vs_0[i] : vs_0[i]*(1.0 + dlnVs[i])
+        vp_i = tf_ref_velocity ? vp_0[i] : vs_i*(vp_0[i]/vs_0[i])
+        # Thomsen Parameters
+        ϵ, δ, γ = k_ϵ*AniMag[i], k_δ*AniMag[i], k_γ*AniMag[i] # Define Thomsen parameters as scalar multiples of F
+        α = vp_i/sqrt(1.0 + q16_15*ϵ + q4_15*δ) # The Thomsen P-velocity (i.e. symmetry axis velocity)
+        β = sqrt( ((vs_i^2) - q2_15*(α^2)*(ϵ - δ))/(1.0 + q2_3*γ) ) # The Thomsen S-velocity (i.e. symmetry axis velocity)
+        # Quasi-shear slownesses: Hexagonal Weak Elastic Anisotropy
+        us1 = 1.0/(β*sqrt(1.0 + 2.0*((α/β)^2)*(ϵ - δ)*cosx2*sinx2))
+        us2 = 1.0/(β*sqrt(1.0 + 2.0*γ*sinx2))
+
+        # Effective anisotropic shear slowness
+        raytmp.u[i] = tf_principal ? us2 + (us1 - us2)*(cos(Δζ)^2) : 0.5*(us2 - us1)*sin(2*Δζ)
+    end
+
+    return nothing
+end
+
+# ANISOTROPIC P + S INVERSION
+function tt_S_dlnVp_dlnVp2Vs_AniMag_SymAzm_SymRad_Thomsen(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
+    # Extract Views to Perturbational Fields
+    dlnVp = get_field("dlnVp",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    dlnVp2Vs = get_field("dlnVp2Vs",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    AniMag = get_field("AniMag",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymAzm = get_field("SymAzm",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymRad = get_field("SymRad",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+
+    # Populate raytmp with appropriate slownesses (true = principal velocity; false = splitting intensity)
+    s_slowness_thomsen_dlnVp_dlnVp2Vs_AniMag_SymAzm_SymElv!(raytmp,nray,vnox,rays2nodes,dlnVp,dlnVp2Vs,AniMag,SymAzm,SymRad,true; tf_sin_sym_elv = true)
+
+    # Compute ray segment travel-times
+    average_velocity(raytmp,rays2nodes,nray) # Ray segment averaged velocity
+    for (i,j) in enumerate(rays2nodes[1,nray]:rays2nodes[2,nray]-1)
+        raytmp.dt[i] = vnox[11,j] * raytmp.u_path[i]
+    end
+    pred[obs.ray2obs[nray]] = sum(raytmp.dt) - obs.ref_t[obs.ray2obs[nray]]
+
+    return nothing
+end
+function si_S_dlnVp_dlnVp2Vs_AniMag_SymAzm_SymRad_Thomsen(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
+    # Extract Views to Perturbational Fields
+    dlnVp = get_field("dlnVp",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    dlnVp2Vs = get_field("dlnVp2Vs",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    AniMag = get_field("AniMag",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymAzm = get_field("SymAzm",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymRad = get_field("SymRad",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+
+    # Populate raytmp with appropriate slownesses (true = principal velocity; false = splitting intensity)
+    s_slowness_thomsen_dlnVp_dlnVp2Vs_AniMag_SymAzm_SymElv!(raytmp,nray,vnox,rays2nodes,dlnVp,dlnVp2Vs,AniMag,SymAzm,SymRad,false; tf_sin_sym_elv = true)
+
+    # Compute ray segment travel-times
+    average_velocity(raytmp,rays2nodes,nray) # Ray segment averaged velocity
+    for (i,j) in enumerate(rays2nodes[1,nray]:rays2nodes[2,nray]-1)
+        raytmp.dt[i] = vnox[11,j] * raytmp.u_path[i]
+    end
+    pred[obs.ray2obs[nray]] = sum(raytmp.dt) # Do not difference with reference time!
+
+    return nothing
+end
+function s_slowness_thomsen_dlnVp_dlnVp2Vs_AniMag_SymAzm_SymElv!(raytmp,nray,vnox,rays2nodes,dlnVp,dlnVp2Vs,AniMag,SymAzm,SymElv,tf_principal; tf_sin_sym_elv = false)
+    # Hard-coded Thomsen Ratios
+    # k_ϵ, k_δ, k_γ = -1.0, -1.0, -0.6179 # Elliptical Anisotropy
+    k_ϵ, k_δ, k_γ = -1.0, -1.3101, -0.6179 # Oceanic Lithosphere from Russell et al. 2019
+
+    # Compute phase velocities
+    vp_0 = @view vnox[6,rays2nodes[1,nray]:rays2nodes[2,nray]] # Reference model Vp
+    vs_0 = @view vnox[7,rays2nodes[1,nray]:rays2nodes[2,nray]] # Reference model Vs
+    RayAzm = @view vnox[8,rays2nodes[1,nray]:rays2nodes[2,nray]] # Ray azimuth
+    RayElv = @view vnox[9,rays2nodes[1,nray]:rays2nodes[2,nray]] # Ray elevation
+    PazQT = @view vnox[10,rays2nodes[1,nray]:rays2nodes[2,nray]] # Polarization azimuth in QT-plane
+    q16_15, q4_15, q2_3, q2_15 = (16.0/15.0), (4.0/15.0), (2.0/3.0), (2.0/15.0) # Fractions for computing invariant isotropic velocities
+    @inbounds for i in eachindex(dlnVp)
+        # Directional components
+        sym_elv_i = tf_sin_sym_elv ? asin(SymElv[i]) : SymElv[i]
+        cosx, Δζ = symmetry_axis_cosine(SymAzm[i], sym_elv_i, RayAzm[i], RayElv[i], PazQT[i])
+        cosx2 = cosx^2
+        sinx2 = 1.0 - cosx2
+        # Interpret dlnVp as a perturbation to the invariant isotropic velocity
+        vp_i = vp_0[i]*(1.0 + dlnVp[i])
+        vs_i = vp_i/((vp_0[i]/vs_0[i])*(1.0 + dlnVp2Vs[i]))
+        # Thomsen Parameters
+        ϵ, δ, γ = k_ϵ*AniMag[i], k_δ*AniMag[i], k_γ*AniMag[i] # Define Thomsen parameters as scalar multiples of F
+        α = vp_i/sqrt(1.0 + q16_15*ϵ + q4_15*δ) # The Thomsen P-velocity (i.e. symmetry axis velocity)
+        β = sqrt( ((vs_i^2) - q2_15*(α^2)*(ϵ - δ))/(1.0 + q2_3*γ) ) # The Thomsen S-velocity (i.e. symmetry axis velocity)
+        # Quasi-shear slownesses: Hexagonal Weak Elastic Anisotropy
+        us1 = 1.0/(β*sqrt(1.0 + 2.0*((α/β)^2)*(ϵ - δ)*cosx2*sinx2))
+        us2 = 1.0/(β*sqrt(1.0 + 2.0*γ*sinx2))
+
+        # Effective anisotropic shear slowness
+        raytmp.u[i] = tf_principal ? us2 + (us1 - us2)*(cos(Δζ)^2) : 0.5*(us2 - us1)*sin(2*Δζ)
+    end
+    
+    return nothing
+end
+
+function symmetry_axis_cosine(symmetry_azimuth, symmetry_elevation, propagation_azimuth, propagation_elevation, qt_polarization)
+    sinΔλ, cosΔλ = sincos(propagation_azimuth - symmetry_azimuth) 
+    sinϕp, cosϕp = sincos(propagation_elevation)
+    sinϕs, cosϕs = sincos(symmetry_elevation)
+    # Cosine of angle between propagation direction and symmetry axis
+    cosθ = cosΔλ*cosϕp*cosϕs + sinϕp*sinϕs
+    # Angle between polarization vector and projection of symmetry axis in QT-plane (i.e. ray-normal plane)
+    # Do not return cos(ζ). The sign of this angle is important for splitting intensity.
+    ζ = atan(-sinΔλ*cosϕs, cosΔλ*sinϕp*cosϕs - cosϕp*sinϕs) - qt_polarization
+    return cosθ, ζ
+end
+
+
 # Start Gianmarco Forward Functions in v1.5
 # -- S-wave isotropic travel time with relative perturbation dlnVp, ratio Vp/Vs and hexagonal anisotropy (spherical)
 function tt_S_dlnVs_Vp2Vs_fp_psi_gamma(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
@@ -195,17 +400,6 @@ function c_S_dlnVs_fsh_psi_gamma_thomsen(raytmp,nray,vnox,rays2nodes,dlnVs,fsh,p
         # Effective anisotropic shear slowness
         raytmp.u[i] = us2 + (us1 - us2)*(cos(Δζ)^2)
     end
-end
-function symmetry_axis_cosine(symmetry_azimuth, symmetry_elevation, propagation_azimuth, propagation_elevation, qt_polarization)
-    sinΔλ, cosΔλ = sincos(propagation_azimuth - symmetry_azimuth) 
-    sinϕp, cosϕp = sincos(propagation_elevation)
-    sinϕs, cosϕs = sincos(symmetry_elevation)
-    # Cosine of angle between propagation direction and symmetry axis
-    cosθ = cosΔλ*cosϕp*cosϕs + sinϕp*sinϕs
-    # Angle between polarization vector and projection of symmetry axis in QT-plane (i.e. ray-normal plane)
-    # Do not return cos(ζ). The sign of this angle is important for splitting intensity.
-    ζ = atan(-sinΔλ*cosϕs, cosΔλ*sinϕp*cosϕs - cosϕp*sinϕs) - qt_polarization
-    return cosθ, ζ
 end
 
 # -- S-wave splitting intensity with dlnVs and hexagonal anisotropy (spherical parametrization)

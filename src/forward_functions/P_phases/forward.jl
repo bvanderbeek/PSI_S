@@ -6,6 +6,81 @@
 # Then, within each forward function, you can call the above methods with the appropriate inputs
 # This should reduce some redundancy and probability of errors
 
+# NEW ANISOTROPIC FUNCTIONS
+function tt_P_dlnVp_AniMag_SymAzm_SymRad_Thomsen(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
+    # Extract Views to Perturbational Fields
+    dlnVp = get_field("dlnVp",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    AniMag = get_field("AniMag",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymAzm = get_field("SymAzm",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymRad = get_field("SymRad",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+
+    # Populate raytmp with appropriate slownesses
+    p_slowness_thomsen_dlnVp_AniMag_SymAzm_SymElv!(raytmp,nray,vnox,rays2nodes,dlnVp,AniMag,SymAzm,SymRad; tf_sin_sym_elv = true)
+
+    # Compute ray segment travel-times
+    average_velocity(raytmp,rays2nodes,nray) # Ray segment averaged velocity
+    for (i,j) in enumerate(rays2nodes[1,nray]:rays2nodes[2,nray]-1)
+        raytmp.dt[i] = vnox[11,j] * raytmp.u_path[i]
+    end
+    pred[obs.ray2obs[nray]] = sum(raytmp.dt) - obs.ref_t[obs.ray2obs[nray]]
+
+    return nothing
+end
+function tt_P_dlnVp_AniMag_SymAzm_SymElv_Thomsen(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
+    # Extract Views to Perturbational Fields
+    dlnVp = get_field("dlnVp",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    AniMag = get_field("AniMag",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymAzm = get_field("SymAzm",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+    SymElv = get_field("SymElv",raytmp.fields,rays2nodes,rays_outdom,nray,model)
+
+    # Populate raytmp with appropriate slownesses
+    p_slowness_thomsen_dlnVp_AniMag_SymAzm_SymElv!(raytmp,nray,vnox,rays2nodes,dlnVp,AniMag,SymAzm,SymElv; tf_sin_sym_elv = false)
+
+    # Compute ray segment travel-times
+    average_velocity(raytmp,rays2nodes,nray) # Ray segment averaged velocity
+    for (i,j) in enumerate(rays2nodes[1,nray]:rays2nodes[2,nray]-1)
+        raytmp.dt[i] = vnox[11,j] * raytmp.u_path[i]
+    end
+    pred[obs.ray2obs[nray]] = sum(raytmp.dt) - obs.ref_t[obs.ray2obs[nray]]
+
+    return nothing
+end
+function p_slowness_thomsen_dlnVp_AniMag_SymAzm_SymElv!(raytmp,nray,vnox,rays2nodes,dlnVp,AniMag,SymAzm,SymElv; tf_sin_sym_elv = false)
+    # Hard-coded Thomsen Ratios
+    k_ϵ, k_δ = 1.0, 1.0 # Elliptical (±, slow/fast symmetry)
+    # k_ϵ, k_δ = -1.0, -1.3101 # Oceanic Lithosphere from Russell et al. 2019
+
+    # Compute phase velocities
+    vp_0 = @view vnox[6,rays2nodes[1,nray]:rays2nodes[2,nray]] # Reference model Vp
+    RayAzm = @view vnox[8,rays2nodes[1,nray]:rays2nodes[2,nray]] # Ray azimuth
+    RayElv = @view vnox[9,rays2nodes[1,nray]:rays2nodes[2,nray]] # Ray elevation
+    q16_15, q4_15 = (16.0/15.0), (4.0/15.0) # Fractions for computing invariant isotropic velocity
+    @inbounds for i in eachindex(dlnVp)
+        # Directional components
+        sym_elv_i = tf_sin_sym_elv ? asin(SymElv[i]) : SymElv[i]
+        cosx = symmetry_axis_cosine(SymAzm[i], sym_elv_i, RayAzm[i], RayElv[i])
+        cosx2 = cosx^2
+        sinx2 = 1.0 - cosx2
+        sinx4 = sinx2^2
+        # Interpret dlnVp as a perturbation to the invariant isotropic velocity
+        vp_i = vp_0[i]*(1.0 + dlnVp[i]) 
+        # Thomsen Parameters
+        ϵ, δ = k_ϵ*AniMag[i], k_δ*AniMag[i] # Define Thomsen parameters as scalar multiples of anisotropic magnitude
+        α = vp_i/sqrt(1.0 + q16_15*ϵ + q4_15*δ) # The Thomsen P-velocity (i.e. symmetry axis velocity)
+        # P-slowness: Hexagonal Weak Elastic Anisotropy
+        raytmp.u[i] = 1.0/(α*sqrt(1.0 + 2.0*δ*sinx2*cosx2 + 2.0*ϵ*sinx4))
+    end
+    return nothing
+end
+function symmetry_axis_cosine(symmetry_azimuth, symmetry_elevation, propagation_azimuth, propagation_elevation)
+    cosΔλ = cos(propagation_azimuth - symmetry_azimuth)
+    sinϕp, cosϕp = sincos(propagation_elevation)
+    sinϕs, cosϕs = sincos(symmetry_elevation)
+    # Cosine of angle between propagation direction and symmetry axis
+    cosθ = cosΔλ*cosϕp*cosϕs + sinϕp*sinϕs
+    return cosθ
+end
+
 # Start Gianmarco Forward Functions in v1.5
 # -- P-wave anisotropic travel time with relative perturbation dlnVp and radial anisotropy (spherical parametrization)
 function tt_P_dlnVp_fp(raytmp,vnox,rays2nodes,rays_outdom,nray,model,pred,obs)
