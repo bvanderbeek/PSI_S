@@ -503,7 +503,8 @@ function directional_posterior!(posterior_samples; spherical_conversion = (a,b,c
     directional_bias = sqrt(0.5)*sqrt( ((λ1 - λ2)^2) + ((λ1 - λ3)^2) + ((λ2 - λ3)^2) )/sqrt( (λ1^2) + (λ2^2) + (λ3^2) )
 
     # Distribution of strength and orientation
-    v1, v2, v3 = vec[1,3], vec[2,3], vec[3,3]
+    v1, v2, v3 = val[3]*vec[1,3], val[3]*vec[2,3], val[3]*vec[3,3]
+    v_norm = abs(val[3])
     for j in axes(posterior_samples, 2)
         # Directional vector
         f_j, azm_j, elv_j = posterior_samples[1,j], posterior_samples[2,j], posterior_samples[3,j]
@@ -511,9 +512,10 @@ function directional_posterior!(posterior_samples; spherical_conversion = (a,b,c
         sinϕ, cosϕ = sincos(elv_j)
         u1, u2, u3 = f_j*cosϕ*cosλ, f_j*cosϕ*sinλ, f_j*sinϕ
         # Metrics
-        ul = sqrt((u1^2) + (u2^2) + (u3^2))
-        prj = abs(u1*v1 + u2*v2 + u3*v3) # Projection of sampled vectors onto principal orientation <--- Compute dlnVp correlation with this field???
-        cos2Δ = 2.0*((prj/ul)^2) - 1.0 # Angular deviation with principal orientation; cos2Δ = 2.0*(cosΔ^2) - 1.0
+        u_norm = sqrt((u1^2) + (u2^2) + (u3^2))
+        prj, puv = abs(u1*v1 + u2*v2 + u3*v3), u_norm*v_norm # Projection of sampled vectors onto principal orientation <--- Compute dlnVp correlation with this field???
+        cos2Δ = puv > 0.0 ? 2.0*((prj/puv)^2) - 1.0 : 1.0 # Angular deviation with principal orientation; cos2Δ = 2.0*(cosΔ^2) - 1.0
+        prj = sqrt(prj) # Projected magnitude
         # Store result
         posterior_samples[2,j], posterior_samples[3,j] = prj, 0.5*acos(cos2Δ)
     end
@@ -603,20 +605,24 @@ function accumulate_moments!(post_moments, query_points, field_names, Model;
     tf_squeeze = false, tf_cart_to_geo = true)
 
     tf_in_bounds = true # Initialize in-bounds flag
-    cj, rj = [0], [0.0] # Allocate arrays to store nearest neighbor index and distance for small performance boost
     for (k, field_k) in enumerate(field_names) # Loop over parameter fields
         # Interpolate posterior
         fid = Model.fieldslist[field_k]
         Tree = return_voronoi_tree(Model.fields[fid])
-        for j = axes(query_points, 2) # Loop over query points
-            xj = @view query_points[:, j]
+        Threads.@threads for j = axes(query_points, 2) # Parallel loop over query points
             if tf_squeeze
-                tf_in_bounds = check_field_bounds(xj[1], xj[2], xj[3], Model.fields[fid].slims; tf_cart_to_geo = tf_cart_to_geo)
+                tf_in_bounds = check_field_bounds(query_points[1, j], query_points[2, j], query_points[3, j], 
+                Model.fields[fid].slims; tf_cart_to_geo = tf_cart_to_geo)
             end
-            val = tf_in_bounds ? nearest_neighbor_value(xj, Model.fields[fid], Tree; icell = cj, dist = rj) : Model.fields[fid].ref_value
+            if tf_in_bounds
+                ind, dist = nn(Tree, @view query_points[:, j])
+                val = Model.fields[fid].v[ind]
+            else
+                val = Model.fields[fid].ref_value
+            end
             for i in axes(post_moments, 1) # Loop over moments
                 post_moments[i, j, k] += (val^i)
-                # coord_moments[i, j, k] += (rj[i]^i) # Also compute positional statistics
+                # coord_moments[i, j, k] += (dist^i) # Also compute positional statistics
             end
         end
     end
