@@ -1,5 +1,5 @@
 # Pre-Processing functions for PSI_S
-using TauP
+# using TauP
 using Printf
 
 # 'check_data' will loop over the arrivals and check that TauP can predict a travel-time
