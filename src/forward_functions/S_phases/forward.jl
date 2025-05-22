@@ -156,8 +156,8 @@ function si_S_dlnVp_dlnVp2Vs_AniMag_SymAzm_SymRad_Thomsen(raytmp,vnox,rays2nodes
 end
 function s_slowness_thomsen_dlnVp_dlnVp2Vs_AniMag_SymAzm_SymElv!(raytmp,nray,vnox,rays2nodes,dlnVp,dlnVp2Vs,AniMag,SymAzm,SymElv,tf_principal; tf_sin_sym_elv = false)
     # Hard-coded Thomsen Ratios
-    # k_ϵ, k_δ, k_γ = -1.0, -1.0, -0.6179 # Elliptical Anisotropy
-    k_ϵ, k_δ, k_γ = -1.0, -1.3101, -0.6179 # Oceanic Lithosphere from Russell et al. 2019
+    k_ϵ, k_δ, k_γ = 1.0, 1.0, 1.0 # Elliptical Anisotropy
+    # k_ϵ, k_δ, k_γ = -1.0, -1.3101, -0.6179 # Oceanic Lithosphere from Russell et al. 2019
 
     # Compute phase velocities
     vp_0 = @view vnox[6,rays2nodes[1,nray]:rays2nodes[2,nray]] # Reference model Vp
