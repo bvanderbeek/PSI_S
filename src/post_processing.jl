@@ -98,8 +98,10 @@ function write_ensemble_vtk(vtk_file, dims, grid_points, PostTend, field_names)
     # Allocations
     num_fields, num_pts = size(PostTend.mean) # Number of moments, grid points, and fields
     num_quantiles = size(PostTend.quantiles, 1)
-    # Number of scalar fields (mean, median, and mode for each field)
+    # Number of scalar fields. For each parameter field, we have the following:
+    # Mean, median, mode, additional quantiles
     num_sca = num_fields*(3 + num_quantiles)
+    haskey(PostTend, :h_distance) && num_sca += 3*num_fields # Nuclei distances, Hellinger distance, Kolmogorov metric
     vtk_scalar_field = Vector{String}(undef, num_sca)
     vtk_scalar_data = Vector{AbstractVector{Float64}}(undef, num_sca)
     # Number of vector fields (median interval, highest density interval, low-high interval, directional vectors)
@@ -139,6 +141,28 @@ function write_ensemble_vtk(vtk_file, dims, grid_points, PostTend, field_names)
             vtk_scalar_data[l] = view(PostTend.quantiles, j, i, :)
         end
     end
+    # New metrics computed by posterior_tendencies (not yet by posterior_directional_tendencies)
+    if haskey(PostTend, :h_distance)
+        # Nuclei distances
+        for (i, field_i) in enumerate(field_names)
+            l += 1
+            vtk_scalar_field[l] = "ndist_"*field_i
+            vtk_scalar_data[l] = view(PostTend.dist, i, :)
+        end
+        # Posterior differences
+        for (i, field_i) in enumerate(field_names)
+            l += 1
+            vtk_scalar_field[l] = "hval_"*field_i
+            vtk_scalar_data[l] = view(PostTend.h_distance, i, :)
+        end
+        # Posterior differences
+        for (i, field_i) in enumerate(field_names)
+            l += 1
+            vtk_scalar_field[l] = "kval_"*field_i
+            vtk_scalar_data[l] = view(PostTend.k_metric, i, :)
+        end
+    end
+
 
     # Vector Fields: Credible Intervals
     l = 0
@@ -340,21 +364,24 @@ function collect_posterior_samples(num_chains, num_burn, num_out, sample_points,
 
     return posterior_samples
 end
-# Collect posterior samples for a multiple points
+# Collect posterior samples for multiple points
 function collect_posterior_samples(sample_points, markov_chains, nn_trees, field_list)
     num_pts = size(sample_points, 2)
     num_fields, num_samples, num_chains = size(nn_trees)
     posterior_samples = Vector{Array{Float64, 2}}(undef, num_pts)
+    nuclei_distances = Vector{Array{Float64, 2}}(undef, num_pts)
     [posterior_samples[i] = zeros(num_fields, num_samples*num_chains) for i in 1:num_pts]
+    [nuclei_distances[i] = zeros(num_fields, num_samples*num_chains) for i in 1:num_pts]
     for (i, vi) in enumerate(posterior_samples)
+        ni = nuclei_distances[i]
         xi = @view sample_points[:,i]
-        collect_posterior_samples!(vi, xi, markov_chains, nn_trees, field_list)
+        collect_posterior_samples!(vi, ni, xi, markov_chains, nn_trees, field_list)
     end
 
-    return posterior_samples
+    return posterior_samples, nuclei_distances
 end
 # Collect posterior samples for all fields at a single point and store in pre-allocated array
-function collect_posterior_samples!(posterior_samples, sample_point, markov_chains, nn_trees, field_list::Vector{String})
+function collect_posterior_samples!(posterior_samples, nuclei_distances, sample_point, markov_chains, nn_trees, field_list::Vector{String})
     l = 0 # Initialise sample counter
     icell, dist = [0], [0.0] # Arrays for NearestNeighbor indexing
     for (k, chain_k) in enumerate(markov_chains) # Loop over Markov chains
@@ -364,7 +391,7 @@ function collect_posterior_samples!(posterior_samples, sample_point, markov_chai
                 fid = chain_k_j.fieldslist[field_i]
                 knn!(icell, dist, nn_trees[i, j, k], sample_point, 1)
                 posterior_samples[i, l] = chain_k_j.fields[fid].v[icell[1]]
-                # nuclei_distance[i, l] = dist[1] # ...To be implemented!
+                nuclei_distances[i, l] = dist[1]
             end
         end
     end
@@ -374,7 +401,7 @@ end
 
 # --- Posterior Tendencies --- #
 
-function posterior_tendencies(query_points::Array{T,2}, markov_chains, nn_trees, field_names;
+function posterior_tendencies(query_points::Array{T,2}, markov_chains, nn_trees, field_names, priors;
     credible_level = 0.9, q_quantiles = [], mode_intervals = zeros(length(field_names))) where {T}
 
     # Allocations
@@ -382,14 +409,18 @@ function posterior_tendencies(query_points::Array{T,2}, markov_chains, nn_trees,
     num_samples, num_pts = num_out*num_chains, size(query_points, 2) # Number of posterior samples and interpolation points
     num_quantiles = length(q_quantiles) # Number of quantiles
     post_samples = zeros(num_fields, num_samples) # Container for posterior samples
+    nuclei_dist = zeros(num_fields, num_samples) # Distances to Voronoi cells
     PostTend = (
+        dist = zeros(num_fields, num_pts),
         mean = zeros(num_fields, num_pts),
         median = zeros(num_fields, num_pts),
         mode = zeros(num_fields, num_pts),
         quantiles = zeros(num_quantiles, num_fields, num_pts),
         median_interval = zeros(2, num_fields, num_pts),
         low_high_interval = zeros(2, num_fields, num_pts),
-        highest_density_interval = zeros(2, num_fields, num_pts)
+        highest_density_interval = zeros(2, num_fields, num_pts),
+        h_distance = zeros(num_fields, num_pts),
+        k_metric = zeros(num_fields, num_pts)
     )
 
     # Compute tendencies
@@ -397,10 +428,13 @@ function posterior_tendencies(query_points::Array{T,2}, markov_chains, nn_trees,
     for j in 1:num_pts # Loop over interpolation points
         # Collect posterior samples 
         x_j = @view query_points[:, j]
-        collect_posterior_samples!(post_samples, x_j, markov_chains, nn_trees, field_names)
+        collect_posterior_samples!(post_samples, nuclei_dist, x_j, markov_chains, nn_trees, field_names)
         # Sort samples for interval caluclations (increasing order)
         sort!(post_samples, dims = 2)
         for i in eachindex(field_names) # Loop over fields to compute metrics
+            d_i = @view nuclei_dist[i,:]
+            PostTend.dist[i,j] = mean(d_i)
+
             s_i = @view post_samples[i,:]
             PostTend.mean[i,j] = mean(s_i)
             PostTend.median[i,j] = quantile(s_i, 0.5; sorted = true)
@@ -410,6 +444,10 @@ function posterior_tendencies(query_points::Array{T,2}, markov_chains, nn_trees,
             PostTend.median_interval[:,i,j] .= median_interval(s_i, credible_level; is_sorted = true)
             PostTend.low_high_interval[:,i,j] .= low_high_interval(s_i, credible_level; is_sorted = true)
             PostTend.highest_density_interval[:,i,j] .= highest_density_interval(s_i, credible_level; is_sorted = true)
+            # Quantify how much the posterior differs from the prior
+            PostTend.h_distance[i,j] = hellinger_distance!(s_i, priors[i]...; is_sorted = true)
+            PostTend.k_metric[i,j] = kolmogorov_metric!(s_i, priors[i]...; is_sorted = true)
+
             # Compute last because sample values are rounded in-place
             PostTend.mode[i,j] = binned_mode!(s_i; mode_interval = mode_intervals[i], is_sorted = true)
         end
@@ -431,7 +469,9 @@ function posterior_directional_tendencies(query_points::Array{T,2}, markov_chain
     num_samples, num_pts = num_out*num_chains, size(query_points, 2) # Number of posterior samples and interpolation points
     num_quantiles = length(q_quantiles) # Number of quantiles
     post_samples = zeros(num_fields, num_samples) # Container for posterior samples
+    nuclei_dist = zeros(num_fields, num_samples) # Distances to Voronoi cells
     PostTend = (
+        dist = zeros(num_fields, num_pts),
         directional_vectors = zeros(3, 3, num_pts),
         mean = zeros(num_fields, num_pts),
         median = zeros(num_fields, num_pts),
@@ -447,7 +487,7 @@ function posterior_directional_tendencies(query_points::Array{T,2}, markov_chain
     for j in 1:num_pts # Loop over interpolation points
         # Collect posterior samples 
         x_j = @view query_points[:, j]
-        collect_posterior_samples!(post_samples, x_j, markov_chains, nn_trees, field_names)
+        collect_posterior_samples!(post_samples, nuclei_dist, x_j, markov_chains, nn_trees, field_names)
         # Convert to directional posterior
         Tj, dbj, vj, wj = directional_posterior!(post_samples; spherical_conversion = spherical_conversion)
         PostTend.directional_vectors[:,1,j] .= vj[1]*wj[:,1]
@@ -456,6 +496,9 @@ function posterior_directional_tendencies(query_points::Array{T,2}, markov_chain
         # Sort samples for interval caluclations (increasing order)
         sort!(post_samples, dims = 2)
         for i in eachindex(field_names) # Loop over fields to compute metrics
+            d_i = @view nuclei_dist[i,:]
+            PostTend.dist[i,j] = mean(d_i)
+
             s_i = @view post_samples[i,:]
             PostTend.mean[i,j] = mean(s_i)
             PostTend.median[i,j] = quantile(s_i, 0.5; sorted = true)
@@ -533,6 +576,7 @@ function posterior_moments(query_points::Array{T,2}, markov_chains, nn_trees, fi
     num_samples, num_pts = num_out*num_chains, size(query_points, 2) # Number of posterior samples and interpolation points
     num_moments = (num_moments < 2) && (num_pairs > 0) ? 2 : num_moments # Number of moments (correlation calculation requires at least 2)
     post_samples = zeros(num_fields, num_samples) # Container for posterior samples
+    nuclei_dist = zeros(num_fields, num_samples) # Distances to Voronoi cells...not currently used
     post_moments = zeros(num_moments, num_pts, num_fields) # Container for posterior moments
     post_correlation = zeros(1, num_pts, num_pairs) # Container for correlation products
 
@@ -544,7 +588,7 @@ function posterior_moments(query_points::Array{T,2}, markov_chains, nn_trees, fi
     for j in 1:num_pts # Loop over interpolation points
         # Collect posterior samples 
         x_j = @view query_points[:, j]
-        collect_posterior_samples!(post_samples, x_j, markov_chains, nn_trees, field_names)
+        collect_posterior_samples!(post_samples, nuclei_dist, x_j, markov_chains, nn_trees, field_names)
         # Moment sums
         for i in 1:num_moments # Loop over moments
             post_moments[i,j,:] .+= sum(x -> x^i, post_samples; dims = 2)
@@ -669,6 +713,7 @@ function posterior_directional_moments(num_chains, num_burn, query_points, direc
     post_moments = zeros(num_moments, num_pts, 3 + num_pairs) # Moments for (1) fraction, (2) projected magnitude, (3) angular deviation, and correlation fields
     post_correlation = zeros(1, num_pts, num_pairs) # Sample correlation products with projected magnitude
     directional_strength = zeros(1, num_pts) # Container for directional strength (i.e. projected magnitude) calculations...equivalent to post_moments[1,:,2]?
+    angular_weights = zeros(num_pts) # For weighted moment calculation
 
     # Build directional tensor
     num_models = 0
@@ -693,7 +738,7 @@ function posterior_directional_moments(num_chains, num_burn, query_points, direc
         chain_n = load(chain_directory*"/"*chain_name*"."*string(n)*".jld", "MarkovChain")
         splice!(chain_n, 1:num_burn) # Remove burn-in
         for chain_n_i in chain_n # Loop over iterations in chain
-            accumulate_directional_moments!(directional_moments, directional_strength, major_axis, query_points, directional_fields, chain_n_i;
+            accumulate_directional_moments!(directional_moments, directional_strength, angular_weights, major_axis, query_points, directional_fields, chain_n_i;
             spherical_conversion = spherical_conversion)
             if num_pairs > 0 # Compute correlations with directional strength
                 accumulate_directional_correlation!(scalar_moments, post_correlation, directional_strength, query_points, correlation_fields, chain_n_i)
@@ -701,9 +746,18 @@ function posterior_directional_moments(num_chains, num_burn, query_points, direc
         end
         println("Finished moment accumulation for chain "*string(n)*" of "*string(num_chains)*"...")
     end
+    # Finish moment calculations -- with angular weights
+    angular_moments = @view post_moments[:,:,3]
+    [angular_moments[:,j] ./= w_j for (j, w_j) in enumerate(angular_weights)]
+    fill_field_moments!(angular_moments, 1)
+    # Remaining non-weighted moments
+    scalar_moments = @view post_moments[:,:,1:2]
+    fill_field_moments!(scalar_moments, num_models)
+    scalar_moments = @view post_moments[:,:,4:end]
+    fill_field_moments!(scalar_moments, num_models)
+
     # Finish moment calculations
-    # Note! Consider weighting angular deviation moments by anisotropic strength (see also note in  accumulate_directional_moments!)
-    fill_field_moments!(post_moments, num_models)
+    # fill_field_moments!(post_moments, num_models)
     if num_pairs > 0
         # Update list of field names
         field_names = Vector{String}(undef, 3 + num_pairs)
@@ -751,7 +805,7 @@ function accumulate_directional_tensor!(tensor_sum, query_points, directional_fi
     return nothing
 end
 
-function accumulate_directional_moments!(post_moments, directional_strength, major_axis, query_points, directional_fields, Model;
+function accumulate_directional_moments!(post_moments, directional_strength, angular_weights, major_axis, query_points, directional_fields, Model;
     spherical_conversion = (a,b,c) -> (a,b,c))
 
     # Index directional model fields
@@ -785,11 +839,11 @@ function accumulate_directional_moments!(post_moments, directional_strength, maj
         for i in axes(post_moments, 1)
             post_moments[i,j,1] += (f_j^i)
             post_moments[i,j,2] += (prj^i)
-            post_moments[i,j,3] += ((0.5*acos(cos2Δ))^i)
+            # post_moments[i,j,3] += ((0.5*acos(cos2Δ))^i)
             # Consider weighting angular deviation by magnitude
-            # post_moments[i,j,3] += u0*((0.5*acos(cos2Δ))^i)
+            post_moments[i,j,3] += u0*((0.5*acos(cos2Δ))^i)
         end
-        # angular_weight[1,j] += u0 # Need also the sum of angular weights for each interpolation point
+        angular_weights[j] += u0 # Need also the sum of angular weights for each interpolation point
         directional_strength[1,j] = prj # Directional correlation with this field
     end
 
@@ -911,6 +965,47 @@ function probability_tail(samples, val)
     w = 1.0/length(samples)
     f_in = w*sum(x -> (x < val), samples)
     return f_in
+end
+
+# Computes the largest deviation between the CDFs of a sampled distribution
+# and a uniform distribution
+function kolmogorov_metric!(samples, a, b; is_sorted = false)
+    !is_sorted && sort!(samples)
+    n, dba, kmax = length(samples), b - a, 0.0
+    for (i, s_i) in enumerate(samples)
+        p_il, p_ir = (i-1)/n, i/n
+        u_i = (s_i - a)/dba
+        kmax = max(kmax, abs(p_il - u_i), abs(p_ir - u_i))
+    end
+    return kmax
+end
+
+function hellinger_distance!(samples, a, b; is_sorted = false)
+    # Sort samples if necessary
+    !is_sorted && sort!(samples)
+
+    # Compute bin interval using -- simply √n rule
+    ns = length(samples)
+    dx = (b - a)/round(Int, sqrt(ns))
+
+    # Bin probability -- uniform
+    u_0 = dx/(b-a)
+
+    # Sampled probability
+    p_sum, bin_max, ni = 0.0, a + dx, 0
+    for s_i in samples
+        while s_i > bin_max
+            p_sum += sqrt(ni/ns)
+            bin_max += dx # Shift bin limit
+            ni = 0 # Reset bin counter
+        end
+        ni += 1
+    end
+    p_sum += sqrt(ni/ns) # Last bin
+
+    H2 = 1.0 - sqrt(u_0)*p_sum
+    H2 = max(0.0, min(H2, 1.0)) # Avoid rounding errors
+    return sqrt(H2)
 end
 
 
