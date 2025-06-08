@@ -101,7 +101,9 @@ function write_ensemble_vtk(vtk_file, dims, grid_points, PostTend, field_names)
     # Number of scalar fields. For each parameter field, we have the following:
     # Mean, median, mode, additional quantiles
     num_sca = num_fields*(3 + num_quantiles)
-    haskey(PostTend, :h_distance) && num_sca += 3*num_fields # Nuclei distances, Hellinger distance, Kolmogorov metric
+    if haskey(PostTend, :h_distance)
+        num_sca += 3*num_fields # Nuclei distances, Hellinger distance, Kolmogorov metric
+    end
     vtk_scalar_field = Vector{String}(undef, num_sca)
     vtk_scalar_data = Vector{AbstractVector{Float64}}(undef, num_sca)
     # Number of vector fields (median interval, highest density interval, low-high interval, directional vectors)
