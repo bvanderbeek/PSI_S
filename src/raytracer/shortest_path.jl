@@ -63,9 +63,7 @@ function raytracing_dijkstra(gr, observables, LocalRaysManager, paths, evtsta, I
    # lowmen = [zeros(Int64,length(gr.x)) for i in 1:Threads.nthreads()]      # -- lower interval nodes collector
 
     sr = collect((LocalRaysManager.source2receivers))
-    println("Initialization points: ", length(sr))
     Threads.@threads for npair in eachindex(sr)
-        println("Starting point: ", npair)
         t_id = Threads.threadid()
         (source,receivers) = sr[npair]
         if relocation_status
@@ -74,7 +72,7 @@ function raytracing_dijkstra(gr, observables, LocalRaysManager, paths, evtsta, I
             D = Vector{ShortestPathConst}(undef,2)
         end
         if IP.B4DI.status && !firstcall
-            grid = gr # Shallow copy of structure
+            grid = copy_grid(gr)
             interpolate_4Dfield(grid, velocity_4D_field, evtsta, source, node2node)
         else
             grid = gr
@@ -98,7 +96,7 @@ function raytracing_dijkstra(gr, observables, LocalRaysManager, paths, evtsta, I
             D[phase] = dijkstra(grid,source_node,phase,phase_visited;aniso_status=aniso_status)
         end
         if !relocation_status
-            get_path(D,grid,source,receivers,LocalRaysManager,paths,rev)
+            get_path(D,grid,source,receivers,LocalRaysManager,paths,rev,evtsta)
         end
     end 
 
@@ -109,7 +107,7 @@ function raytracing_dijkstra(gr, observables, LocalRaysManager, paths, evtsta, I
             EQrelocation(gr,DShPa,IP,LocalRaysManager,observables,evtsta;it=it)
             for npair in eachindex(collect((LocalRaysManager.source2receivers)))
                 (source,receivers) = collect((LocalRaysManager.source2receivers))[npair]
-                get_path(DShPa[source],gr,source,receivers,LocalRaysManager,paths,rev)
+                get_path(DShPa[source],gr,source,receivers,LocalRaysManager,paths,rev,evtsta)
             end
             # test_reloc_lonlat(gr,evtsta,LocalRaysManager,paths,it)
             # test_reloc_londepth(gr,evtsta,LocalRaysManager,paths,it)
@@ -118,7 +116,7 @@ function raytracing_dijkstra(gr, observables, LocalRaysManager, paths, evtsta, I
     
 end
 
-function get_path(D,gr,source,receivers,LocalRaysManager,paths,rev)
+function get_path(D,gr,source,receivers,LocalRaysManager,paths,rev,evtsta)
     source_node = LocalRaysManager.source_nodes[source]
     phases = Set{Int64}()
     for receiver in receivers
@@ -158,10 +156,11 @@ function shortest_path(D,source,receiver; rev = true)
 end
 
 function raytracing(rays,LocalRaysManager,MarkovChains,observables,evtsta,IP;it=0)
+    # -- here at the moment, but dreaming of IP parameters
+    aniso_status = false
 
-    grid = instance_grid(observables, evtsta, LocalRaysManager, IP)
-
-    !IP.B4DI.status && fill_grid(grid,MarkovChains,evtsta,observables,IP) # -- if 4D is not active -> one velocity field evaluation for all the events
+    grid = instance_grid(observables, evtsta, LocalRaysManager, IP; aniso_status=aniso_status)
+    !IP.B4DI.status && fill_grid(grid,MarkovChains,evtsta,observables,IP;aniso_status=aniso_status) # -- if 4D is not active -> one velocity field evaluation for all the events
 
     refm = readdlm(IP.velocitymodel,' ',Float64,'\n')   # -- reads the reference 1D velocity model
 
@@ -169,7 +168,7 @@ function raytracing(rays,LocalRaysManager,MarkovChains,observables,evtsta,IP;it=
     if IP.B4DI.status
         raytracing_dijkstra(grid, observables, LocalRaysManager, paths, evtsta, IP; firstcall=false, chains = MarkovChains)
     else
-        raytracing_dijkstra(grid, observables, LocalRaysManager, paths, evtsta, IP; firstcall=false, it=it)
+        raytracing_dijkstra(grid, observables, LocalRaysManager, paths, evtsta, IP; firstcall=false, it=it, aniso_status=aniso_status)
     end
 
     rnodes = build_rays(paths,rays,observables,evtsta,LocalRaysManager,IP,refm)
@@ -213,7 +212,7 @@ function fill_grid(grid, MarkovChains, evtsta, observables, IP; aniso_status = f
     print("\n",chain_models,"\n")
     for chain in eachindex(MarkovChains)
         MarkovChain = MarkovChains[chain]
-        for model in MarkovChain[end-chain_models+1:end]
+        for model in MarkovChain[end:end]#[end-chain_models+1:end]
             [(vfields[i] .= 0.0) for i in eachindex(vfields)]
             fieldid = 0
             if model.T[1] != 1
@@ -263,7 +262,7 @@ function fill_grid(grid, MarkovChains, evtsta, observables, IP; aniso_status = f
     @. grid.Vs = grid.Vs / nsamples
     # -- anisotropic ray-tracing --
     if aniso_status
-        aniso_fields(grid,MarkovChains,IP,IP.MCS,raytracer)
+        aniso_fields(grid,MarkovChains,IP,IP.MCS)
     end
     # -----------------------------
     @. grid.σ = grid.σ / nsamples
@@ -349,12 +348,13 @@ function interpolate_4Dfield(grid, velocity_4D_field, evtsta, source, node2node)
     end
 end
 
-function aniso_fields(grid,MarkovChains,IP,MCS,raytracer)
+function aniso_fields(grid,MarkovChains,IP,MCS)
+    print("\ncalculating average anisotropic fields...\n")
     nfields = MarkovChains[begin][end].nfields
     fieldsname = MarkovChains[begin][end].fieldslist
     nchains = length(MarkovChains)
     points = permutedims(hcat(grid.x, grid.y, grid.z))
-    chain_models = Int64(round(raytracer.sub_its / MCS.saveint))
+    chain_models = Int64(round(IP.RayTracingInit.sub_its / MCS.saveint))
     nsamples = 0
     ε_map = zeros(Float64,length(grid.x))
     δ_map = zeros(Float64,length(grid.x))
@@ -378,6 +378,7 @@ function aniso_fields(grid,MarkovChains,IP,MCS,raytracer)
                     ε_map .= 0.0
                     inds = NN_interpolation(points, voronoi.c[:,begin:voronoi.n[1]])
                     [ε_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    δ_map .= ε_map
                 elseif fieldname == "δ"
                     δ_map .= 0.0
                     inds = NN_interpolation(points, voronoi.c[:,begin:voronoi.n[1]])
@@ -472,14 +473,14 @@ function aniso_fields(grid,MarkovChains,IP,MCS,raytracer)
     end
 
     @. grid.ε = grid.ε / nsamples
-    @. grid.δ = grid.δ / nsamples
+    #@. grid.δ = grid.δ / nsamples
     # -- elliptical anisotropy
-    @. grid.δ = grid.ε
+    #@. grid.δ = grid.ε
     # -- low-aspect ratio (100) cracks anisotropy
     # p1 = 0.6742
     # p2 = -0.8169
     # q1 = 0.04419
-    # @. grid.δ = grid.ε*(p1*grid.ε + p2)/(grid.ε + q1)
+    @. grid.δ = grid.ε#*(p1*grid.ε + p2)/(grid.ε + q1)
 
     return true
 

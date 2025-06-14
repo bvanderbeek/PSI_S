@@ -23,6 +23,8 @@ struct GridConst
     σ::Vector{Float64}
     estatics::Vector{Vector{Float64}}
     sstatics::Vector{Vector{Float64}}
+    n2sr::Vector{Set{Int64}}    # -- reg grid node to source/receiver nodes (forward star of closest reg node)
+    sr2n::Dict{Int64,Int64}     # -- source/receiver nodes to regular grid nodes (reg nodes closest to sr nodes)
 end
 
 struct Velocity4DGridConst
@@ -42,12 +44,29 @@ struct Velocity4DGridConst
     σ::Vector{Float64}
 end
 
-function instance_grid(observables, evtsta, raytracer, IP)
+function copy_grid(grid)
+    return GridConst(
+        grid.x,
+        grid.y,
+        grid.z,
+        grid.θ,
+        grid.φ,
+        grid.r,
+        copy(grid.Vp),
+        copy(grid.Vs),
+        grid.fw_level,
+        grid.nnodes,
+        grid.nxny,
+        grid.dmin,
+        grid.perturbed,
+        copy(grid.σ),
+    )
+end
+
+function instance_grid(observables, evtsta, raytracer, IP; aniso_status=false)
     lims = IP.lims
     refm = readdlm(IP.velocitymodel,' ',Float64,'\n')   # -- reads the reference 1D velocity model
 
-    source = ""
-    length(raytracer.source2receivers) == length(raytracer.local_evts) ? source = "evt" : source = "sta"
     nnodes, fw_level, perturb = raytracer.nnodes, raytracer.fw_level, raytracer.perturb
     nn1, nn2, nn3 = nnodes[1], nnodes[2], nnodes[3]
     θmin, θmax = (lims.lat[1]), (lims.lat[2])
@@ -120,7 +139,7 @@ function instance_grid(observables, evtsta, raytracer, IP)
         push!(grid_estatics,zeros(Float64,length(evtsta.evts)))
         push!(grid_sstatics,zeros(Float64,length(evtsta.stas)))
     end
-    gr = GridConst(x, y, z, θ, φ, r, vp, vs, Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), fw_level, [nn1,nn2,nn3], nn1*nn2, dmin, perturb, grid_data_noise, grid_estatics, grid_sstatics)
+    gr = GridConst(x, y, z, θ, φ, r, vp, vs, Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), Vector{Float64}(), fw_level, [nn1,nn2,nn3], nn1*nn2, dmin, perturb, grid_data_noise, grid_estatics, grid_sstatics,Vector{Set{Int64}}(),Dict{Int64,Int64}())
 
     for  k in eachindex(rp), j in eachindex(φp), i in eachindex(θp)
         push!(gr.θ,θp[i])
@@ -133,14 +152,16 @@ function instance_grid(observables, evtsta, raytracer, IP)
         push!(gr.z,zt)
         push!(gr.Vp,0.0)
         push!(gr.Vs,0.0)
-        push!(gr.ε,0.0)
-        push!(gr.δ,0.0)
-        push!(gr.n1,0.0)
-        push!(gr.n2,0.0)
-        push!(gr.n3,0.0)
-        push!(gr.vecef1,0.0)
-        push!(gr.vecef2,0.0)
-        push!(gr.vecef3,0.0)
+        if aniso_status
+            push!(gr.ε,0.0)
+            push!(gr.δ,0.0)
+            push!(gr.n1,0.0)
+            push!(gr.n2,0.0)
+            push!(gr.n3,0.0)
+            push!(gr.vecef1,0.0)
+            push!(gr.vecef2,0.0)
+            push!(gr.vecef3,0.0)
+        end
     end
 
     # -- perturbs primary grid's nodal positions
@@ -166,36 +187,154 @@ function instance_grid(observables, evtsta, raytracer, IP)
                 gr.x[i], gr.y[i], gr.z[i] = geo_to_cartesian(gr.θ[i],gr.φ[i],gr.r[i])
         end
     end
-    
-    # -- moves grid points to concide with events and stations' positions
-    recst_nodes = Set{Int64}()
-    for id in raytracer.local_evts
-        evt = evtsta.evts[id]
-        # xe, ye, ze = @cartesian(evt.lat, evt.lon, R + evt.depth)
-        xe, ye, ze = geo_to_cartesian(evt.lat, evt.lon, R + evt.depth)
-        ind = closest_point(gr,xe,ye,ze)
-        gr.x[ind], gr.y[ind], gr.z[ind] = xe, ye, ze
-        gr.θ[ind], gr.φ[ind], gr.r[ind] = evt.lat, evt.lon, R + evt.depth
-        source == "evt" ? raytracer.source_nodes[id] = ind : raytracer.receiv_nodes[id] = ind
-        push!(recst_nodes,ind)
-    end
-    for id in raytracer.local_stats
-        sta = evtsta.stas[id]
-        # xs, ys, zs = @cartesian(sta.lat, sta.lon, R + sta.elevation)
-        xs, ys, zs = geo_to_cartesian(sta.lat, sta.lon, R + sta.elevation)
-        ind = closest_point(gr,xs,ys,zs)
-        gr.x[ind], gr.y[ind], gr.z[ind] = xs, ys, zs
-        gr.θ[ind], gr.φ[ind], gr.r[ind] = sta.lat, sta.lon, R + sta.elevation
-        source == "evt" ? raytracer.receiv_nodes[id] = ind : raytracer.source_nodes[id] = ind
-        push!(recst_nodes,ind)
-    end
 
-    # minimum_dist(grid)
+    # moved_inds = Dict{Int64,Vector{Float64}}()
+    # # -- moves grid points to concide with events and stations' positions
+    # recst_nodes = Set{Int64}()
+    # for id in raytracer.local_evts
+    #     evt = evtsta.evts[id]
+    #     # xe, ye, ze = @cartesian(evt.lat, evt.lon, R + evt.depth)
+    #     xe, ye, ze = geo_to_cartesian(evt.lat, evt.lon, R + evt.depth)
+    #     ind = closest_point(gr,xe,ye,ze)
+    #     # if !haskey(moved_inds,ind)
+    #         moved_inds[ind] = [gr.θ[ind], gr.φ[ind], gr.r[ind]]
+    #         gr.x[ind], gr.y[ind], gr.z[ind] = xe, ye, ze
+    #         gr.θ[ind], gr.φ[ind], gr.r[ind] = evt.lat, evt.lon, R + evt.depth
+    #     # else
+    #     #     gr.θ[ind], gr.φ[ind], gr.r[ind] = moved_inds[ind]
+    #     #     gr.x[ind], gr.y[ind], gr.z[ind] = @cartesian(gr.θ[ind], gr.φ[ind], gr.r[ind])
+    #     # end
+    #     source == "evt" ? raytracer.source_nodes[id] = ind : raytracer.receiv_nodes[id] = ind
+    #     push!(recst_nodes,ind)
+    # end
+    # for id in raytracer.local_stats
+    #     sta = evtsta.stas[id]
+    #     # xs, ys, zs = @cartesian(sta.lat, sta.lon, R + sta.elevation)
+    #     xs, ys, zs = geo_to_cartesian(sta.lat, sta.lon, R + sta.elevation)
+    #     ind = closest_point(gr,xs,ys,zs)
+    #     # if !haskey(moved_inds,ind)
+    #         moved_inds[ind] = [gr.θ[ind], gr.φ[ind], gr.r[ind]]
+    #         gr.x[ind], gr.y[ind], gr.z[ind] = xs, ys, zs
+    #         gr.θ[ind], gr.φ[ind], gr.r[ind] = sta.lat, sta.lon, R + sta.elevation
+    #     # else
+    #     #     gr.θ[ind], gr.φ[ind], gr.r[ind] = moved_inds[ind]
+    #     #     gr.x[ind], gr.y[ind], gr.z[ind] = @cartesian(gr.θ[ind], gr.φ[ind], gr.r[ind])
+    #     # end
+    #     source == "evt" ? raytracer.receiv_nodes[id] = ind : raytracer.source_nodes[id] = ind
+    #     push!(recst_nodes,ind)
+    # end
+
+    # -- add nodes for sources and receivers
+    if length(raytracer.source2receivers) == length(raytracer.local_evts)
+        source_type = "evt"
+    else
+        source_type = "sta"
+    end
+    for i in eachindex(gr.x)
+        push!(gr.n2sr,Set{Int64}())
+    end
+    θtmp, φtmp, rtmp, xtmp, ytmp, ztmp, Vptmp, Vstmp, εtmp, δtmp, n1tmp, n2tmp, n3tmp, vecef1tmp, vecef2tmp, vecef3tmp = Float64[], Float64[], Float64[], Float64[], Float64[], Float64[], Float64[], Float64[], Float64[], Float64[], Float64[], Float64[], Float64[], Float64[], Float64[], Float64[]
+    fw_influence = -gr.fw_level:gr.fw_level
+    nx, ny, nz = gr.nnodes[1], gr.nnodes[2], gr.nnodes[3]
+    local_nodes = [raytracer.local_evts, raytracer.local_stats]
+    for i_set in eachindex(local_nodes)
+        for id in local_nodes[i_set]
+            if i_set == 1
+                sr = evtsta.evts[id]
+                x_sr, y_sr, z_sr = geo_to_cartesian(sr.lat, sr.lon, R + sr.depth)
+                lon_sr, lat_sr, rad_sr = sr.lon, sr.lat, R + sr.depth
+            elseif i_set == 2
+                sr = evtsta.stas[id]
+                x_sr, y_sr, z_sr = geo_to_cartesian(sr.lat, sr.lon, R + sr.elevation)
+                lon_sr, lat_sr, rad_sr = sr.lon, sr.lat, R + sr.elevation
+            end
+            ind = closest_point(gr,x_sr,y_sr,z_sr)
+            # -- add sr to grid
+            push!(θtmp,lat_sr)
+            push!(φtmp,lon_sr)
+            push!(rtmp,rad_sr)
+            push!(xtmp,x_sr)
+            push!(ytmp,y_sr)
+            push!(ztmp,z_sr)
+            push!(Vptmp,0.0)
+            push!(Vstmp,0.0)
+            if aniso_status
+                push!(εtmp,0.0)
+                push!(δtmp,0.0)
+                push!(n1tmp,0.0)
+                push!(n2tmp,0.0)
+                push!(n3tmp,0.0)
+                push!(vecef1tmp,0.0)
+                push!(vecef2tmp,0.0)
+                push!(vecef3tmp,0.0)
+            end
+            sr_ind = length(gr.x)+length(xtmp)
+            gr.sr2n[sr_ind] = ind
+            if source_type == "evt" 
+                if i_set == 1
+                    raytracer.source_nodes[id] = sr_ind
+                elseif i_set == 2
+                    raytracer.receiv_nodes[id] = sr_ind 
+                end
+            else 
+                if i_set == 1
+                    raytracer.receiv_nodes[id] = sr_ind
+                elseif  i_set == 2
+                    raytracer.source_nodes[id] = sr_ind
+                end
+            end
+            # --
+            i, j, k = CartesianIndex(gr,ind)
+            ik = 0
+            @inbounds for k3 in fw_influence
+                ik += 1
+                k3 += k
+                (k3 < 1 || k3 > nz) && continue 
+                ij = 0
+                @inbounds for k2 in fw_influence
+                    ij += 1
+                    k2 += j
+                    (k2 < 1 || k2 > ny) && continue 
+                    ii = 0
+                    @inbounds for k1 in fw_influence
+                        ii += 1
+                        k1 += i
+                        (k1 < 1 || k1 > nx) && continue 
+                        nn = LinearIndex(gr, k1, k2, k3)
+                        push!(gr.n2sr[nn],sr_ind)
+                    end
+                end
+            end
+        end
+    end
+    for i in eachindex(xtmp)
+        push!(gr.θ,θtmp[i])
+        push!(gr.φ,φtmp[i])
+        push!(gr.r,rtmp[i])
+        push!(gr.x,xtmp[i])
+        push!(gr.y,ytmp[i])
+        push!(gr.z,ztmp[i])
+        push!(gr.Vp,Vptmp[i])
+        push!(gr.Vs,Vstmp[i])
+        if aniso_status
+            push!(gr.ε,εtmp[i])
+            push!(gr.δ,δtmp[i])
+            push!(gr.n1,n1tmp[i])
+            push!(gr.n2,n2tmp[i])
+            push!(gr.n3,n3tmp[i])
+            push!(gr.vecef1,vecef1tmp[i])
+            push!(gr.vecef2,vecef2tmp[i])
+            push!(gr.vecef3,vecef3tmp[i])
+        end
+        push!(gr.n2sr,Set{Int64}())
+    end
 
     for i in eachindex(gr.r)
         gr.Vp[i] = ref_V1D(gr.r[i],refm[:,[1,2]])
         gr.Vs[i] = ref_V1D(gr.r[i],refm[:,[1,3]])
-        (i in recst_nodes) && continue
+        if i > (gr.nnodes[1]*gr.nnodes[2]*gr.nnodes[3])
+            continue
+        end
         if raytracer.topography_status
             lon, lat = gr.φ[i], gr.θ[i]
             # latid, lonid = v_dist_val(lat,θp), v_dist_val(lon,φp)
@@ -210,7 +349,6 @@ function instance_grid(observables, evtsta, raytracer, IP)
             end
         end
     end
-    # print("\n...topography applied...\n")
 
     for iobs in eachindex(observables.Obs)
         obs = observables.Obs[iobs]
