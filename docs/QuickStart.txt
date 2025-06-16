@@ -4,6 +4,7 @@
 
 # Preliminaries
 # If you do not have TauP v2.7.0 or greater, download it from https://github.com/bvanderbeek/TauP.jl
+# NOTE! TauP is only required if you are inverting teleseismic data. Not required for local earthquakes.
 # Reccommend installing Julia via juliaup (https://github.com/JuliaLang/juliaup) to easily run different
 # Julia releases should an incomaptibility arise.
 
