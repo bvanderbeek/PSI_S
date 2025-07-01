@@ -310,6 +310,18 @@ function read_ensemble_vtk(the_vtk; fields = nothing)
 
     return Model
 end
+# Method to write a Model loaded via read_ensemble_vtk
+function write_ensemble_vtk(vtk_file, Model::Dict)
+    xg = pop!(Model, "xgc")
+    yg = pop!(Model, "ygc")
+    zg = pop!(Model, "zgc")
+    vtk_grid(vtk_file, xg, yg, zg) do vtk
+        for (k, v) in Model
+            vtk[k] = v
+        end
+    end
+    return nothing
+end
 
 # Load all Markov chains into a single array
 function load_markov_chains(num_chains, num_burn; chain_directory = pwd(), chain_name = "chain")
