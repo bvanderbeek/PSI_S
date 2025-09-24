@@ -342,7 +342,7 @@ function pertv(voronoi,σ,vnox,nodes2rays,rays2nodes,update,IP;ind=0)
     elseif voronoi.prior == "normal"
         update.term .= -0.5*((voronoi.v[ind]-voronoi.vlims[3])^2-(old_v-voronoi.vlims[3])^2)/(voronoi.vlims[4])^2
         return
-    elseif occursin(voronoi.prior,"half-normal")
+    elseif occursin("half-normal",voronoi.prior)
         update.term .= -0.5*((voronoi.v[ind]-voronoi.vlims[3])^2-(old_v-voronoi.vlims[3])^2)/(voronoi.vlims[4])^2
         if voronoi.prior == "right-half-normal"
             if voronoi.v[ind] < voronoi.vlims[3]
@@ -471,7 +471,7 @@ function birth(voronoi,σ,vnox,nodes2rays,rays2nodes,update,IP)
         σ0 = voronoi.vlims[4]
         birth_term += log(voronoi.vlims[2]-voronoi.vlims[1])
         update.term .= ratio_nuclei_prior - log(sqrt(2*pi)*σ0) - (((newv - voronoi.vlims[3])^2)/(2*(σ0)^2)) + birth_term
-    elseif occursin(voronoi.prior,"half-normal")
+    elseif occursin("half-normal",voronoi.prior)
         σ0 = voronoi.vlims[4]
         birth_term += log(voronoi.vlims[2]-voronoi.vlims[1])
         update.term .= ratio_nuclei_prior - log(sqrt(2*pi)*σ0) - (((newv - voronoi.vlims[3])^2)/(2*(σ0)^2)) + log(2) + birth_term
@@ -559,7 +559,7 @@ function death(voronoi,σ,vnox,nodes2rays,rays2nodes,update,IP)
         σ0 = voronoi.vlims[4]
         death_term -= log(voronoi.vlims[2]-voronoi.vlims[1])
         update.term .= ratio_nuclei_prior + log(sqrt(2*pi)*σ0) + (((oldv - voronoi.vlims[3])^2)/(2*(σ0)^2)) + death_term
-    elseif occursin(voronoi.prior,"half-normal")
+    elseif occursin("half-normal",voronoi.prior)
         σ0 = voronoi.vlims[4]
         death_term -= log(voronoi.vlims[2]-voronoi.vlims[1])
         update.term .= ratio_nuclei_prior + log(sqrt(2*pi)*σ0) + (((oldv - voronoi.vlims[3])^2)/(2*(σ0)^2)) - log(2) + death_term
