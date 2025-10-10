@@ -110,7 +110,9 @@ function run_psi_s(ichunk, P::Dict, IP_fields::Vector{fieldinfo}, IP::IPConst, r
 	end
     fields = Int64[]
     for i in eachindex(MarkovChains[1][end].fields)
-        push!(fields,i)
+        if MarkovChains[1][end].fields[i].vlims[1] != MarkovChains[1][end].fields[i].vlims[2]
+            push!(fields,i)
+        end
     end
     actions, fields = SharedArray(actions), SharedArray(fields)
 
@@ -214,7 +216,9 @@ function run_RJMCMC(wrk_dir, name, chain_id)
 	end
     fields = Int64[]
     for i in eachindex(MarkovChains[1][end].fields)
-        push!(fields,i)
+        if MarkovChains[1][end].fields[i].vlims[1] != MarkovChains[1][end].fields[i].vlims[2]
+            push!(fields,i)
+        end
     end
     actions, fields = SharedArray(actions), SharedArray(fields)
 
@@ -343,6 +347,7 @@ function pertv(voronoi,σ,vnox,nodes2rays,rays2nodes,update,IP;ind=0)
         update.term .= -0.5*((voronoi.v[ind]-voronoi.vlims[3])^2-(old_v-voronoi.vlims[3])^2)/(voronoi.vlims[4])^2
         return
     elseif occursin("half-normal",voronoi.prior)
+        # BPV ONLY VALID WHEN MEAN = 0.0!
         update.term .= -0.5*((voronoi.v[ind]-voronoi.vlims[3])^2-(old_v-voronoi.vlims[3])^2)/(voronoi.vlims[4])^2
         if voronoi.prior == "right-half-normal"
             if voronoi.v[ind] < voronoi.vlims[3]
