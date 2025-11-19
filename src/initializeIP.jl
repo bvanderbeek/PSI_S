@@ -282,26 +282,26 @@ function initialize_IP(IP, IP_obs, IP_fields)
     initialize_paths(paths,paths_list,LocalRaysManager,IP,evtsta,observables,ievt,ista,refm)
 
     println("Progress: Building ray structures...")
-    rnodes = build_rays(paths,rays,observables,evtsta,LocalRaysManager,IP,refm)
+    rnodes = build_rays(paths,rays,observables,evtsta,LocalRaysManager,IP,refm;first_call=true)
     println("Progress: Locating ray-voronoi intersections...")
     voronoi_domain_pierce(rays,rnodes,voronoi_slims,IP)
 
     println("Progress: Adding descriptive fields (i.e. polarization) to rays...")
     for obs in descriptive
-        if obs.obsname == "polarization"
+        # if obs.obsname == "polarization"
             for nray in eachindex(rays)
                 if haskey(obs.ray2obs,nray)
                     @. rays[nray].ζ = obs.obsval[obs.ray2obs[nray]]
                 end
             end
-        end
+        # end
     end
 
     return rnodes, rays, evtsta, observables, LocalRaysManager
 
 end
 
-function build_rays(paths,rays,observables,evtsta,LocalRaysManager,IP,refm)
+function build_rays(paths,rays,observables,evtsta,LocalRaysManager,IP,refm;first_call=false)
     rayn_x = Vector{Float64}()
     rayn_y = Vector{Float64}()
     rayn_z = Vector{Float64}()
@@ -355,6 +355,11 @@ function build_rays(paths,rays,observables,evtsta,LocalRaysManager,IP,refm)
         end
         lst_ind = length(vps)
 
+        if !first_call 
+            ζ = rays[nray].ζ[1]
+        else
+            ζ = 0.0
+        end
         ray = RayConst(                     # -- see rayConst structure in structures.jl for details
             evt,
             sta,
@@ -364,7 +369,7 @@ function build_rays(paths,rays,observables,evtsta,LocalRaysManager,IP,refm)
             zeros(Float64,length(x)), 
             zeros(Float64,length(dx)),
             zeros(Float64,length(dx)),
-            zeros(Float64,length(x)), 
+            ones(length(x))*ζ, 
             [timepath],
             []
         )
@@ -478,7 +483,7 @@ function initialize_model(IP,IP_fields,rnodes,evtsta,observables,rays,Gg,Gt,vnox
             # x, y, z = @cartesian(θs,φs,rs)
             x, y, z = geo_to_cartesian(θs,φs,rs)
             vs = field.init_val
-            if IP.MCS.rand_init_values
+            if IP.MCS.rand_init_values # && (field.name == "SymAzm" || field.name == "SymElv" || field.name == "SymRad")
                 if field.prior == "uniform"
                     vs = (field.vlims[2] - field.vlims[1])*rand() .+ field.vlims[1]
                 elseif field.prior == "normal"

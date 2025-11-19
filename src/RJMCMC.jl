@@ -254,8 +254,7 @@ function run_RJMCMC(wrk_dir, name, chain_id)
 
     @. TMatrix = TMatrix / DMatrix
 
-    save(string(wrk_dir, "/output/", name, "/", name, "_utilities.jld"), "rnodes", rnodes,"observables",observables,"TransitionMatrix",TMatrix,"evtsta",evtsta)
-
+    save(string(wrk_dir, "/output/", name, "/", name, "_utilities.jld"), "rays",rays,"rnodes", rnodes,"observables",observables,"TransitionMatrix",TMatrix,"evtsta",evtsta)
 
 end
 
@@ -351,12 +350,12 @@ function pertv(voronoi,σ,vnox,nodes2rays,rays2nodes,update,IP;ind=0)
         update.term .= -0.5*((voronoi.v[ind]-voronoi.vlims[3])^2-(old_v-voronoi.vlims[3])^2)/(voronoi.vlims[4])^2
         if voronoi.prior == "right-half-normal"
             if voronoi.v[ind] < voronoi.vlims[3]
-                update.term .= -Inf
+		        update.term .= -Inf
                 return
             end
         elseif voronoi.prior == "left-half-normal"
             if voronoi.v[ind] > voronoi.vlims[3]
-                update.term .= -Inf
+		        update.term .= -Inf
                 return
             end
         end
