@@ -25,6 +25,10 @@ function tracing_vfield(Vp1D,Vs1D,gVp,gVs,vfields,active_fields)
         Vp2Vs = vfields[active_fields["Vp2Vs"]]
         @. Vs = Vp / Vp2Vs
     end
+    if haskey(active_fields,"dlnVp2Vs") 
+        dlnVp2Vs = vfields[active_fields["dlnVp2Vs"]]
+        @. Vs = Vp / ((Vp1D/Vs1D) * (1 + dlnVp2Vs))
+    end
     if haskey(active_fields,"η") 
         dlnVp = vfields[active_fields["dlnVp"]]
         η = vfields[active_fields["η"]]
@@ -100,6 +104,7 @@ function raytracing_dijkstra(gr, observables, LocalRaysManager, paths, evtsta, I
         end
     end 
 
+    # test_reloc_lonlat(gr,evtsta,LocalRaysManager,paths,it)
     if relocation_status
         if IP.B4DI.status
             print("\nrelocations not allowed in 4D imaging...\n")
@@ -158,6 +163,10 @@ end
 function raytracing(rays,LocalRaysManager,MarkovChains,observables,evtsta,IP;it=0)
     # -- here at the moment, but dreaming of IP parameters
     aniso_status = false
+    fieldslist = MarkovChains[begin][end].fieldslist
+    if !(haskey(fieldslist,"ε") || haskey(fieldslist,"𝛙") || haskey(fieldslist,"v3"))
+        aniso_status = false    # -- isotropic ray-tracing
+    end
 
     grid = instance_grid(observables, evtsta, LocalRaysManager, IP; aniso_status=aniso_status)
     !IP.B4DI.status && fill_grid(grid,MarkovChains,evtsta,observables,IP;aniso_status=aniso_status) # -- if 4D is not active -> one velocity field evaluation for all the events
@@ -198,7 +207,7 @@ function fill_grid(grid, MarkovChains, evtsta, observables, IP; aniso_status = f
     points_radial = permutedims(hcat(grid.r))
     fieldslist = MarkovChains[begin][end].fieldslist
     nchains = length(MarkovChains)
-    tracing_fields = ["Vp","dlnVp","Vs","dlnVs","Vp2Vs","η"]
+    tracing_fields = ["Vp","dlnVp","Vs","dlnVs","Vp2Vs","dlnVp2Vs","η"]
     active_fields = Dict{String,Int64}()
     vfields = Vector{Vector{Float64}}()
     for fieldname in fieldslist
@@ -212,7 +221,7 @@ function fill_grid(grid, MarkovChains, evtsta, observables, IP; aniso_status = f
     print("\n",chain_models,"\n")
     for chain in eachindex(MarkovChains)
         MarkovChain = MarkovChains[chain]
-        for model in MarkovChain[end:end]#[end-chain_models+1:end]
+        for model in MarkovChain[end-chain_models+1:end]
             [(vfields[i] .= 0.0) for i in eachindex(vfields)]
             fieldid = 0
             if model.T[1] != 1
@@ -279,7 +288,7 @@ function fill_4Dgrid(grid, MarkovChains, IP)
     points_radial = permutedims(hcat(grid.r, ones(length(grid.x))*0.0))
     fieldslist = MarkovChains[begin][end].fieldslist
     nchains = length(MarkovChains)
-    tracing_fields = ["Vp","dlnVp","Vs","dlnVs","Vp2Vs","η"]
+    tracing_fields = ["Vp","dlnVp","Vs","dlnVs","Vp2Vs","dlnVp2Vs","η"]
     
     for frame in eachindex(grid.tp)
         timestep = grid.tp[frame]
@@ -350,6 +359,10 @@ end
 
 function aniso_fields(grid,MarkovChains,IP,MCS)
     print("\ncalculating average anisotropic fields...\n")
+    DB_th = 0.75
+    p1 = 0.6742
+    p2 = -0.8169
+    q1 = 0.04419
     nfields = MarkovChains[begin][end].nfields
     fieldsname = MarkovChains[begin][end].fieldslist
     nchains = length(MarkovChains)
@@ -369,7 +382,7 @@ function aniso_fields(grid,MarkovChains,IP,MCS)
     [push!(T,zeros(Float64,3,3)) for i in eachindex(grid.x)]
     for chain in eachindex(MarkovChains)
         MarkovChain = MarkovChains[chain]
-        for model in MarkovChain[end:end]#[end:-5:end-chain_models+1]
+        for model in MarkovChain[end:-5:end-chain_models+1]
             nsamples += 1
             for i in eachindex(model.fields)
                 voronoi = model.fields[i]
@@ -379,6 +392,7 @@ function aniso_fields(grid,MarkovChains,IP,MCS)
                     inds = NN_interpolation(points, voronoi.c[:,begin:voronoi.n[1]])
                     [ε_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
                     δ_map .= ε_map
+                    # @. δ_map = ε_map*(p1*ε_map + p2)/(ε_map + q1)
                 elseif fieldname == "δ"
                     δ_map .= 0.0
                     inds = NN_interpolation(points, voronoi.c[:,begin:voronoi.n[1]])
@@ -418,12 +432,9 @@ function aniso_fields(grid,MarkovChains,IP,MCS)
         grid.n3[i] = b[3]/nb
 
         grid.ε[i] = sqrt(b[1]^2+b[2]^2+b[3]^2)
-        grid.δ[i] = grid.ε[i]
-        # p1 = 0.6742
-        # p2 = -0.8169
-        # q1 = 0.04419
-        # grid.δ[i] = grid.ε[i]*(p1*grid.ε[i] + p2)/(grid.ε[i] + q1)
-        if crit < 0.75
+        # grid.δ[i] = grid.ε[i]
+        grid.δ[i] = grid.ε[i]*(p1*grid.ε[i] + p2)/(grid.ε[i] + q1)
+        if crit < DB_th
             grid.ε[i] = 0.0
             grid.δ[i] = 0.0
         end
@@ -439,7 +450,7 @@ function aniso_fields(grid,MarkovChains,IP,MCS)
     nsamples = 0
     for chain in eachindex(MarkovChains)
         MarkovChain = MarkovChains[chain]
-        for model in MarkovChain[end:end]#[end:-5:end-chain_models+1]
+        for model in MarkovChain[end:-5:end-chain_models+1]
             nsamples += 1
             for i in eachindex(model.fields)
                 voronoi = model.fields[i]
@@ -463,7 +474,7 @@ function aniso_fields(grid,MarkovChains,IP,MCS)
                 end
             end
             for i in eachindex(grid.ε)
-                if db_map[i] > 0.75
+                if db_map[i] > DB_th
                     γ = asin(v3_map[i])
                     v1, v2, v3 = cos(𝛙_map[i])*cos(γ), sin(𝛙_map[i])*cos(γ), sin(γ)
                     grid.ε[i] += ε_map[i] * abs(v1*v_ecef[i][1]+v2*v_ecef[i][2]+v3*v_ecef[i][3])
@@ -475,12 +486,9 @@ function aniso_fields(grid,MarkovChains,IP,MCS)
     @. grid.ε = grid.ε / nsamples
     #@. grid.δ = grid.δ / nsamples
     # -- elliptical anisotropy
-    #@. grid.δ = grid.ε
+    @. grid.δ = grid.ε
     # -- low-aspect ratio (100) cracks anisotropy
-    # p1 = 0.6742
-    # p2 = -0.8169
-    # q1 = 0.04419
-    @. grid.δ = grid.ε#*(p1*grid.ε + p2)/(grid.ε + q1)
+    # @. grid.δ = grid.ε*(p1*grid.ε + p2)/(grid.ε + q1)
 
     return true
 
@@ -562,19 +570,26 @@ end
 # function buildV(gr)
 #     Vp = zeros(Float64,gr.nnodes[1],gr.nnodes[2],gr.nnodes[3])
 #     Vs = zeros(Float64,gr.nnodes[1],gr.nnodes[2],gr.nnodes[3])
-#     for n in eachindex(gr.Vp)
+#     for n in 1:(gr.nnodes[1]*gr.nnodes[2]*gr.nnodes[3])
 #         i, j, k = CartesianIndex(gr,n)
+#         # print("\n",i," ",j," ",k)
 #         Vp[i,j,k] = gr.Vp[n]
 #         Vs[i,j,k] = gr.Vs[n]
 #     end
-#     latg = rad2deg.(collect(range(gr.θ[1],gr.θ[end],length(Vp[:,1,1]))))
-#     long = rad2deg.(collect(range(gr.φ[1],gr.φ[end],length(Vp[1,:,1]))))
+#     latg = rad2deg.(collect(range(minimum(gr.θ),maximum(gr.θ),length(Vp[:,1,1]))))
+#     long = rad2deg.(collect(range(minimum(gr.φ),maximum(gr.φ),length(Vp[1,:,1]))))
 #     dg = collect(range(gr.r[1],6371,length(Vp[1,1,:]))) .- R
 #     return latg,long,dg,Vp,Vs
 # end
 
 # function test_reloc_lonlat(gr,evtsta,LocalRaysManager,paths,it)
 #     latg,long,dg,Vp,Vs = buildV(gr)
+
+#     # for i in axes(Vp,1), j in axes(Vp,2)
+#     #     if Vp[i,j,1] != 7
+#     #         print("\n",i," ",j)
+#     #     end
+#     # end
 
 #     evtfile = readdlm("input/evt.dat")
 #     stafile = readdlm("input/sta.dat")
@@ -589,7 +604,10 @@ end
 #         push!(loclat,rad2deg(evtsta.evts[i].lat))
 #     end
 
-#     p1 = heatmap(latg,long,Vp[:,:,1],clim=(6,8),c=cgrad(:rainbow, rev=true),aspect_ratio=:equal,dpi=600)
+#     # print(latg,"\n")
+#     # print(long,"\n")
+#     p1 = heatmap(latg,long,Vp[:,:,1],c=cgrad(:rainbow, rev=true),aspect_ratio=:equal,dpi=600)
+#     # display(Vp[:,:,1])
 #     # scatter!(stafile[:,3],stafile[:,2],color=:black,markershape=:utriangle,markersize=2,legend=false)
 #     for npair in eachindex(collect((LocalRaysManager.source2receivers)))
 #         (source,receivers) = collect((LocalRaysManager.source2receivers))[npair]
@@ -616,7 +634,7 @@ end
 #         push!(loc_dists,sqrt((x1-x2)^2+(y1-y2)^2+(z1-z2)^2))
 #     end
 #     Vp2Vs = @. Vp / Vs
-#     p2 = heatmap(latg,long,Vp2Vs[:,:,1],clim=(1.6,2.2),c=cgrad(:roma, rev=true),aspect_ratio=:equal,dpi=600)
+#     p2 = heatmap(latg,long,Vp2Vs[:,:,1],c=cgrad(:roma, rev=true),aspect_ratio=:equal,dpi=600)
 #     plot(p1,p2)
 #     name = "output/synth_PS/figs/reloc/relocations_$it.png"
 #     Plots.savefig(name)
