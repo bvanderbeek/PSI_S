@@ -351,13 +351,13 @@ function pertv(voronoi,σ,vnox,nodes2rays,rays2nodes,update,IP;ind=0)
         if voronoi.prior == "right-half-normal"
             if voronoi.v[ind] < voronoi.vlims[3]
 		        update.term .= -Inf
-                return
             end
+            return
         elseif voronoi.prior == "left-half-normal"
             if voronoi.v[ind] > voronoi.vlims[3]
 		        update.term .= -Inf
-                return
             end
+            return
         end
     end
     if !check_boundaries(voronoi.v[ind],voronoi.vlims)
@@ -486,13 +486,13 @@ function birth(voronoi,σ,vnox,nodes2rays,rays2nodes,update,IP)
     elseif voronoi.prior == "right-half-normal"
         if newv < voronoi.vlims[3]
             update.term .= -Inf
-            return
         end
+        return
     elseif voronoi.prior == "left-half-normal"
         if newv > voronoi.vlims[3]
             update.term .= -Inf
-            return
         end
+        return
     end
     if !check_boundaries(newv,voronoi.vlims)
         update.term .= -Inf
