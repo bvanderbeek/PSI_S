@@ -2,23 +2,69 @@
 # using TauP
 using Printf
 
+# Compares up and downgoing phases and selects first arriving
+function check_taup_predictions(Events, Stations, Data, ref_model, phase_up, phase_down; dR = 0.0, Rref = 6371.0)
+    tf_extended = dR > 0.0
+    nobs = length(Data.observation)
+    kbad, sld = falses(nobs), zeros(nobs)
+    tt, dist, baz, phase_out = zeros(nobs), zeros(nobs), zeros(nobs), Vector{String}(undef, nobs)
+
+    TimeObj = buildTimeObj(ref_model)
+    for k in eachindex(Data.observation)
+        # Indexing
+        evt_k, sta_k = Data.event_id[k], Data.station_id[k] # Event and station ID
+        j_evt, j_sta = Events.position[evt_k], Stations.position[sta_k] # Event and station linear index
+        # Event-station distance
+        evt_lat, evt_lon, evt_elv = Events.latitude[j_evt], Events.longitude[j_evt], Events.elevation[j_evt]
+        sta_lat, sta_lon, sta_elv = Stations.latitude[j_sta], Stations.longitude[j_sta], Stations.elevation[j_sta]
+        dist[k], baz[k] = TauP.taup_geoinv(sta_lat, sta_lon, evt_lat, evt_lon)
+        # Adjusted source and receiver depths
+        evt_dpt, sta_dpt = tf_extended ? (dR - evt_elv, dR - sta_elv) : (-evt_elv, 0.0)
+
+        # Compare phases
+        tt_u, _ = taup_time!(TimeObj, phase_up, dist[k], evt_dpt, sta_dpt)
+        tt_u = isnan(tt_u) ? Inf : tt_u
+        tt_d, _ = taup_time!(TimeObj, phase_down, dist[k], evt_dpt, sta_dpt)
+        tt_d = isnan(tt_d) ? Inf : tt_d
+        # Select first arriving phase
+        tt[k], phase_out[k] = tt_d < tt_u ? (tt_d, phase_down) : (tt_u, phase_up)
+        kbad[k] = isinf(tt[k]) || isnan(tt[k]) ? true : false
+
+        # Compute straight-line-distance
+        r_1, r_2 = Rref + evt_elv, Rref + sta_elv
+        sinϕ_1, cosϕ_1 = sincosd(evt_lat)
+        sinλ_1, cosλ_1 = sincosd(evt_lon)
+        sinϕ_2, cosϕ_2 = sincosd(sta_lat)
+        sinλ_2, cosλ_2 = sincosd(sta_lon)
+        x_1, y_1, z_1 = r_1*cosϕ_1*cosλ_1, r_1*cosϕ_1*sinλ_1, r_1*sinϕ_1
+        x_2, y_2, z_2 = r_2*cosϕ_2*cosλ_2, r_2*cosϕ_2*sinλ_2, r_2*sinϕ_2
+        sld[k] = sqrt((x_2 - x_1)^2 + (y_2 - y_1)^2 + (z_2 - z_1)^2)
+    end
+    nbad = sum(kbad)
+    nbad > 0 && (@warn "There are "*string(nbad)*" bad events!")
+
+    return kbad, tt, dist, baz, phase_out, sld
+end
+
 # 'check_data' will loop over the arrivals and check that TauP can predict a travel-time
 # for every event-station-phase pair. It will return a boolean vector (kbad) that is true
 # at the indices of arrivals that could not be predicted, a modified list of phase names
 # (phase_out), and the distance (dist) and back-azimuth (baz) of the arrivals.
-function check_data(Events, Stations, Data, ref_model; dR = 0.0)
-    tf_extended = dR > 0.0
+function check_data(Events, Stations, Data, ref_model; dR = 0.0, AltPhase = return_alt_phases())
+    tf_extended = dR > 0.0 # If true, event depths, station elevations, and surface reflection phase names will be modified
+    itag = dR - floor(Int, dR) == 0.0 ? "^"*string(floor(Int, dR)) : "^"*string(dR) # Modifier for surface reflection phase names
+    
     nobs = length(Data.observation)
     kbad = falses(nobs)
     tt, dist, baz, phase_out = zeros(nobs), zeros(nobs), zeros(nobs), Vector{String}(undef, nobs)
 
-    AltPhase = return_alt_phases()
     TimeObj = buildTimeObj(ref_model)
     for (k, phase_k) in enumerate(Data.phase)
         # If using extended model, modify surface reflected phase names accordingly (e.g. pP becomes p^9P)
         if tf_extended
             tf_surf_refl = (length(phase_k) > 1) && (phase_k[1:2] == "pP" || phase_k[1:2] == "sS")
-            tf_surf_refl && (phase_k = phase_k[1]*"^9"*phase_k[2:end])
+            tf_surf_refl && (phase_k = phase_k[1]*itag*phase_k[2:end])
+            tf_surf_refl && @warn("Surface reflection phase name modified!")
         end
         phase_out[k] = phase_k
         # Indexing
@@ -28,10 +74,10 @@ function check_data(Events, Stations, Data, ref_model; dR = 0.0)
         evt_lat, evt_lon, evt_elv = Events.latitude[j_evt], Events.longitude[j_evt], Events.elevation[j_evt]
         sta_lat, sta_lon, sta_elv = Stations.latitude[j_sta], Stations.longitude[j_sta], Stations.elevation[j_sta]
         dist[k], baz[k] = TauP.taup_geoinv(sta_lat, sta_lon, evt_lat, evt_lon)
-        # Predict travel_time
+        # Predict traveltime
         evt_dpt, sta_dpt = tf_extended ? (dR - evt_elv, dR - sta_elv) : (-evt_elv, 0.0)
         tt_k, _ = taup_time!(TimeObj, phase_k, dist[k], evt_dpt, sta_dpt)
-        if isnan(tt_k)
+        if isnan(tt_k) # Try an alternative phase
             phase_alt = (dist[k] >= 160.0) && (phase_k == "P") ? "PKIKP" : AltPhase[phase_k] # AD-HOC ASSUMPTION!!!
             println("Trying phase: ", phase_alt)
             tt_k, _ = taup_time!(TimeObj, phase_alt, dist[k], evt_dpt, sta_dpt)
@@ -127,7 +173,7 @@ function read_observation_file(observation_file; eid_type = Int, sid_type = Stri
 
     return (event_id = evt_id, station_id = sta_id, observation = b, phase = phs) # Returns NamedTuple
 end
-# 'read_observation_file' will read a data file formated for PSI_S.
+# 'read_observation_file' will read a data file formated for PSI_D.
 function read_psi_d_observation_file(observation_file; eid_type = Int, sid_type = String, dlm = isspace, num_col = 7)
     tf_string_event_id = eid_type == String # Treat event IDs as Strings?
     tf_string_station_id = sid_type == String # Treat station IDs as Strings?
@@ -158,11 +204,32 @@ function read_psi_d_observation_file(observation_file; eid_type = Int, sid_type 
     return (observation=obs, uncertainty=unc, period=prd, phase=phs,
         event_id=evt_id, station_id=sta_id, channel=chan) # Returns NamedTuple
 end
+# Convenience function to delete a set of IDs missing from a reference list
+function subset_aquisition_structure!(Aqui, id_list)
+    # Flag events and stations missing from dataset
+    tf_out = trues(size(Aqui.id))
+    for id in id_list
+        pos = Aqui.position[id]
+        tf_out[pos] = false
+    end
+    # Delete position maps
+    [out_i && delete!(Aqui.position, Aqui.id[i]) for (i, out_i) in enumerate(tf_out)]
+    # Remove missing ids
+    deleteat!(Aqui.id, tf_out)
+    deleteat!(Aqui.latitude, tf_out)
+    deleteat!(Aqui.longitude, tf_out)
+    deleteat!(Aqui.elevation, tf_out)
+    # Re-map positions
+    [Aqui.position[id] = k for (k, id) in enumerate(Aqui.id)]
+
+    return nothing
+end
 
 
 
 # These functions write properly formated PSI_S data files.
-function write_psi_s_events(out_file, Events)
+function write_psi_s_events(out_file, Events; tf_overwrite = false)
+    !tf_overwrite && isfile(out_file) && error("Output file "*out_file*" already exists!")
     io = open(out_file, "w")
     for k in eachindex(Events.id)
         @printf(io, "%5i %12.6f %12.6f %12.6f %12.6f \n", k, Events.latitude[k], Events.longitude[k], -Events.elevation[k], 0.0) # Depth and a null origin time
@@ -170,7 +237,8 @@ function write_psi_s_events(out_file, Events)
     close(io)
     return nothing
 end
-function write_psi_s_stations(out_file, Stations)
+function write_psi_s_stations(out_file, Stations; tf_overwrite = false)
+    !tf_overwrite && isfile(out_file) && error("Output file "*out_file*" already exists!")
     io = open(out_file, "w")
     for k in eachindex(Stations.id)
         @printf(io, "%5i %12.6f %12.6f %12.6f \n", k, Stations.latitude[k], Stations.longitude[k], Stations.elevation[k]) # Elevation!
@@ -178,7 +246,8 @@ function write_psi_s_stations(out_file, Stations)
     close(io)
     return nothing
 end
-function write_psi_s_observations(out_file, Data, Events, Stations)
+function write_psi_s_observations(out_file, Data, Events, Stations; tf_overwrite = false)
+    !tf_overwrite && isfile(out_file) && error("Output file "*out_file*" already exists!")
     io = open(out_file, "w")
     for (k, b) in enumerate(Data.observation)
         evt_k, sta_k = Data.event_id[k], Data.station_id[k]
@@ -188,7 +257,8 @@ function write_psi_s_observations(out_file, Data, Events, Stations)
     close(io)
     return nothing
 end
-function write_psi_s_observations(out_file, Data)
+function write_psi_s_observations(out_file, Data; tf_overwrite = false)
+    !tf_overwrite && isfile(out_file) && error("Output file "*out_file*" already exists!")
     io = open(out_file, "w")
     for (k, b) in enumerate(Data.observation)
         evt_k, sta_k = Data.event_id[k], Data.station_id[k]
@@ -199,10 +269,10 @@ function write_psi_s_observations(out_file, Data)
 end
 
 
-function compute_event_demeaned_delays(Data, Events)
-    rdt = zeros(length(Data.observation))
-    med, num = compute_event_means(Data, Events)
-    for (k, v) in enumerate(Data.observation)
+function compute_event_demeaned_delays(Data, Events; delays = Data.observation)
+    rdt = zeros(size(delays))
+    med, num = compute_event_means(Data, Events; delays = delays)
+    for (k, v) in enumerate(delays)
         evt_id = Data.event_id[k]
         ievt = Events.position[evt_id]
         rdt[k] = v - med[ievt]
@@ -210,14 +280,16 @@ function compute_event_demeaned_delays(Data, Events)
     return rdt, num
 end
 
-function compute_event_means(Data, Events)
+function compute_event_means(Data, Events; delays = Data.observation)
     med = zeros(length(Events.id))
     num = zeros(length(Events.id))
-    for (k, v) in enumerate(Data.observation)
-        evt_id = Data.event_id[k]
-        ievt = Events.position[evt_id]
-        med[ievt] += v
-        num[ievt] += 1.0
+    for (k, v) in enumerate(delays)
+        if !isnan(v)
+            evt_id = Data.event_id[k]
+            ievt = Events.position[evt_id]
+            med[ievt] += v
+            num[ievt] += 1.0
+        end
     end
     med ./= num
     
@@ -228,10 +300,12 @@ function compute_station_means(Data, Stations; delays = Data.observation)
     msd = zeros(length(Stations.id))
     num = zeros(length(Stations.id))
     for (k, v) in enumerate(delays)
-        sta_id = Data.station_id[k]
-        jsta = Stations.position[sta_id]
-        msd[jsta] += v
-        num[jsta] += 1.0
+        if !isnan(v)
+            sta_id = Data.station_id[k]
+            jsta = Stations.position[sta_id]
+            msd[jsta] += v
+            num[jsta] += 1.0
+        end
     end
     msd ./= num
 
