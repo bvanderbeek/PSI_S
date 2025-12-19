@@ -24,6 +24,7 @@ using StaticArrays
 using WriteVTK
 using ReadVTK
 using Distributions
+using SpecialFunctions
 
 # Global Constants
 const R = 6371.0

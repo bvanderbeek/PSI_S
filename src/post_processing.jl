@@ -21,9 +21,8 @@ struct ChainMetrics{I, F, S}
     rrms::Array{F,2} # Root-mean-squared observation residual for each observable (columns) at each iteration (rows)
     pnoise::Array{F,2} # Noise parameter for each observable (columns) at each iteration (rows)
     num_cells::Array{I,2} # Number of Voronoi cells in each field (columns) at each iteration (rows)
-    # ADDITIONAL FIELDS
-    # norm_field::Array{F,2} # Norm of each field?
-    # norm_event_statics::Array{F,2} # (iteration, data type); ModelConst.dataspace.Obs[i].estatics
+    norm_field::Array{F,2} # Norm of each field?
+    rms_event_statics::Array{F,2} # (iteration, data type); ModelConst.dataspace.Obs[i].estatics
 end
 function ChainMetrics(Chain::Vector{ModelConst}; nsaved = 1)
     N = length(Chain[1].dataspace.Obs) # Number of observables
@@ -31,17 +30,22 @@ function ChainMetrics(Chain::Vector{ModelConst}; nsaved = 1)
     # Construct observable dictionary
     obs = Dict{Int, String}()
     [obs[i] = B.obsname for (i, B) in enumerate(Chain[1].dataspace.Obs)]
-    CM = ChainMetrics(obs, Chain[1].fieldslist, zeros(Int, L), zeros(Int, L), zeros(Float64, L), zeros(Float64, L, N), zeros(Float64, L, N), zeros(Int, L, F))
-    for (i, chain_i) in enumerate(Chain)
+    CM = ChainMetrics(obs, Chain[1].fieldslist, zeros(Int, L), zeros(Int, L), zeros(Float64, L), zeros(Float64, L, N), zeros(Float64, L, N), zeros(Int, L, F), zeros(Float64, L, F), zeros(Float64, L, N))
+    for (i, chain_i) in enumerate(Chain) # Chain loop
         CM.iteration[i] = (i - 1)*nsaved
         CM.num_accepted[i] = chain_i.accepted[1]
         CM.fobj[i] = chain_i.misfit[1]
-        for j in 1:N
+        for j in 1:N # Observable loop
             CM.rrms[i,j] = chain_i.rms[j]
             CM.pnoise[i,j] = chain_i.dataspace.Obs[j].noise[1]
+            CM.rms_event_statics[i,j] = sum(x->x^2, chain_i.dataspace.Obs[j].estatics)
+            CM.rms_event_statics[i,j] /= length(chain_i.dataspace.Obs[j].estatics)
+            CM.rms_event_statics[i,j] = sqrt(CM.rms_event_statics[i,j])
         end
         for j in 1:F
             CM.num_cells[i,j] = chain_i.fields[j].n[1]
+            CM.norm_field[i,j] = sum(x->x^2, chain_i.fields[j].v)
+            CM.norm_field[i,j] = sqrt(CM.norm_field[i,j])
         end
     end
     
@@ -460,7 +464,8 @@ function posterior_tendencies(query_points::Array{T,2}, markov_chains, nn_trees,
             PostTend.highest_density_interval[:,i,j] .= highest_density_interval(s_i, credible_level; is_sorted = true)
             # Quantify how much the posterior differs from the prior
             PostTend.h_distance[i,j] = hellinger_distance!(s_i, priors[i]...; is_sorted = true)
-            PostTend.k_metric[i,j] = kolmogorov_metric!(s_i, priors[i]...; is_sorted = true)
+            # Needs to updated for non-uniform priors...also I don't use this metric
+            # PostTend.k_metric[i,j] = kolmogorov_metric!(s_i, priors[i]...; is_sorted = true)
 
             # Compute last because sample values are rounded in-place
             PostTend.mode[i,j] = binned_mode!(s_i; mode_interval = mode_intervals[i], is_sorted = true)
@@ -650,6 +655,7 @@ function posterior_moments(num_chains::Int, num_burn::Int, query_points::Array{T
         end
         println("Finished moment accumulation for chain "*string(n)*" of "*string(num_chains)*"...")
     end
+    num_models == 0 && error("Cannot build ensemble. Empty chains!")
     # Finish moment calculations
     fill_field_moments!(post_moments, num_models)
     if num_pairs > 0
@@ -740,6 +746,7 @@ function posterior_directional_moments(num_chains, num_burn, query_points, direc
         end
         println("Finished tensor accumulation for chain "*string(n)*" of "*string(num_chains)*"...")
     end
+    num_models == 0 && error("Cannot build ensemble. Empty chains!")
     post_vectors ./= num_models
 
     # Convert tensors to principal eigenvectors scaled by eigenvalues
@@ -848,6 +855,7 @@ function accumulate_directional_moments!(post_moments, directional_strength, ang
         u0, v0 = sqrt((u1^2) + (u2^2) + (u3^2)), sqrt((v1^2) + (v2^2) + (v3^2))
         prj, puv0 = abs(u1*v1 + u2*v2 + u3*v3), u0*v0 # Unsigned dot-product
         cos2Δ = puv0 > 0.0 ? 2.0*((prj/puv0)^2) - 1.0 : 1.0 # Angular deviation with principal orientation; cos2Δ = 2.0*(cosΔ^2) - 1.0
+        cos2Δ = min(cos2Δ, 1.0) # Avoid floating point errors that cause subsequent acos call to fail
         prj = sqrt(prj) # Projected magnitude
         # Accumulate result
         for i in axes(post_moments, 1)
@@ -982,7 +990,7 @@ function probability_tail(samples, val)
 end
 
 # Computes the largest deviation between the CDFs of a sampled distribution
-# and a uniform distribution
+# and a uniform distribution...needs to be updated for other priors (see hellinger_distance!)
 function kolmogorov_metric!(samples, a, b; is_sorted = false)
     !is_sorted && sort!(samples)
     n, dba, kmax = length(samples), b - a, 0.0
@@ -994,11 +1002,12 @@ function kolmogorov_metric!(samples, a, b; is_sorted = false)
     return kmax
 end
 
+# Hellinger distance assuming a uniform prior
 function hellinger_distance!(samples, a, b; is_sorted = false)
     # Sort samples if necessary
     !is_sorted && sort!(samples)
 
-    # Compute bin interval using -- simply √n rule
+    # Compute bin interval using -- simple √n rule
     ns = length(samples)
     dx = (b - a)/round(Int, sqrt(ns))
 
@@ -1020,6 +1029,55 @@ function hellinger_distance!(samples, a, b; is_sorted = false)
     H2 = 1.0 - sqrt(u_0)*p_sum
     H2 = max(0.0, min(H2, 1.0)) # Avoid rounding errors
     return sqrt(H2)
+end
+# Hellinger distance given an arbitrary prior cdf function
+# a, b, σ, n = -0.2, 0.2, 0.05, 1000
+# samples_u = a .+ (b-a)*rand(n)
+# samples_n = σ*randn(n)
+# cdf_u = (x; v_min = a, v_max = b) -> min(1.0, max(0.0, (x-v_min)/(v_max-v_min)))
+# cdf_n = (x; u = 0.0, sdev = σ) -> 0.5 + 0.5*erf((x-u)/(sqrt(2.0)*sdev))
+# dx = (b-a)/round(Int, sqrt(length(samples)))
+function hellinger_distance!(samples, dx::Float64, cdf::Function; is_sorted = false)
+    # Bin probabilities
+    # Uniform: (x; v_min = -0.1, v_max = 0.1) -> min(1.0, max(0.0, (x-v_min)/(v_max-v_min)))
+    # Normal: (x; u = 0.0, sdev = 0.1) -> 0.5 + 0.5*erf((x-u)/(sqrt(2.0)*sdev))
+    # Half-normal: (x; sdev = 0.1) -> max(0.0, erf(x/(sqrt(2.0)*sdev)))
+
+    # Sort samples if necessary
+    !is_sorted && sort!(samples)
+
+    # Determine bin interval (Freedman-Diaconis rule)
+    if dx <= 0.0
+        xmin, xmax = median_interval(samples, 0.5; is_sorted = true)
+        dx = 2.0*(xmax - xmin)/(length(samples)^(1/3))
+    end
+
+    # Sampled probability
+    a, b = samples[1], samples[1] + dx
+    p_sum, ni, ns = 0.0, 0, length(samples)
+    for s_i in samples
+        while s_i > b # Update counters
+            p_ab = cdf(b) - cdf(a)
+            p_sum += sqrt((ni/ns)*p_ab)
+            a += dx
+            b += dx
+            ni = 0
+        end
+        ni += 1
+    end
+    # Integrate last bin
+    p_ab = cdf(b) - cdf(a)
+    p_sum += sqrt((ni/ns)*p_ab)
+
+    H2 = 1.0 - p_sum
+    H2 = max(0.0, min(H2, 1.0)) # Avoid rounding errors
+    return sqrt(H2)
+end
+# Analytic Hellinger distance between a uniform on the interval (a,b) and a
+# normal distribution with mean = 0.0 and standard deviation = σ.
+function hellinger_uniform_v_normal(a,b,σ)
+   f = (x,a,b,σ) -> ((b-a)^(-0.5))*((2.0*pi*(σ^2))^(-0.25))*sqrt(pi)*σ*erf(0.5*x/σ)
+   return sqrt(1.0 - f(b,a,b,σ) + f(a,a,b,σ))
 end
 
 
@@ -1179,7 +1237,7 @@ function build_ensemble_model(num_chains, num_burn, grid_points, field_names;
 
         println("Finished interpolating chain "*string(n)*" of "*string(num_chains)*"...")
     end
-
+    num_models == 0 && error("Cannot build ensemble. Empty chains!")
     # Finish statistics calculations
     mean_model ./= num_models
     sdev_model ./= num_models
@@ -1213,7 +1271,7 @@ function build_ensemble_correlation(num_chains, num_burn, grid_points, field_a, 
 
         println("Finished interpolating chain "*string(n)*" of "*string(num_chains)*"...")
     end
-
+    num_models == 0 && error("Cannot build ensemble. Empty chains!")
     # Average model
     mean_model ./= num_models
     # Standard deviation
@@ -1248,6 +1306,7 @@ function build_ensemble_tensor(num_chains, num_burn, grid_points, directional_fi
 
         println("Finished interpolating chain "*string(n)*" of "*string(num_chains)*"...")
     end
+    num_models == 0 && error("Cannot build ensemble. Empty chains!")
     mean_tensor ./= num_models
 
     # Compute symmetry axes

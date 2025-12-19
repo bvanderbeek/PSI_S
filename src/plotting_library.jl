@@ -38,11 +38,11 @@ function plot_chain_metrics(CM::Array{<:ChainMetrics, N};
 end
 # Plot evolution of a single Markov chain
 function plot_chain_metrics(CM::ChainMetrics;
-    istart = 1, ref_rms = CM.rrms[1,:], fig_array = [plot(),plot(),plot(),plot(),plot()],
+    istart = 1, ref_rms = CM.rrms[1,:], fig_array = [plot(),plot(),plot(),plot(),plot(),plot()],
     tf_display_figures = true, field_colors = (:black, :blue, :green, :red, :purple, :cyan, :pink))
 
     # Hard-coded figure names
-    fig_names = ("AcceptanceRatio", "Objective", "VarianceReduction", "Noise", "Dimensions")
+    fig_names = ("AcceptanceRatio", "Objective", "VarianceReduction", "Noise", "Dimensions", "EventStatics")
 
     # Initialise container for chain labels
     N, F = length(CM.obs), length(CM.fields)
@@ -101,6 +101,17 @@ function plot_chain_metrics(CM::ChainMetrics;
     fig_array[5] = plot_data_array!(fig_array[5], rit, CM.num_cells[istart:end,:]; chain_labels = chain_labels, field_colors = field_colors)
     xlabel!(fig_array[5], xlabel_its)
     ylabel!(fig_array[5], "number of cells")
+
+    # 6. RMS Event Statics
+    # Construct labels for each observable
+    if fig_array[6].n > 0
+        fill!(chain_labels, nothing)
+    else
+        [chain_labels[j] = obs_name for (j, obs_name) in CM.obs]
+    end
+    fig_array[6] = plot_data_array!(fig_array[6], rit, CM.rms_event_statics[istart:end,:]; chain_labels = chain_labels, field_colors = field_colors)
+    xlabel!(fig_array[6], xlabel_its)
+    ylabel!(fig_array[6], "rms event static")
 
     tf_display_figures ? [display(h) for h in fig_array] : nothing
     return fig_array, fig_names
