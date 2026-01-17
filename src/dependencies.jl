@@ -25,6 +25,7 @@ using WriteVTK
 using ReadVTK
 using Distributions
 using SpecialFunctions
+using StatsBase # Used for weighted medians/means
 
 # Global Constants
 const R = 6371.0
