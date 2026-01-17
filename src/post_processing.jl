@@ -106,7 +106,7 @@ function write_ensemble_vtk(vtk_file, dims, grid_points, PostTend, field_names)
     # Mean, median, mode, additional quantiles
     num_sca = num_fields*(3 + num_quantiles)
     if haskey(PostTend, :h_distance)
-        num_sca += 3*num_fields # Nuclei distances, Hellinger distance, Kolmogorov metric
+        num_sca += 2*num_fields # Nuclei distances, Hellinger distance
     end
     vtk_scalar_field = Vector{String}(undef, num_sca)
     vtk_scalar_data = Vector{AbstractVector{Float64}}(undef, num_sca)
@@ -161,12 +161,12 @@ function write_ensemble_vtk(vtk_file, dims, grid_points, PostTend, field_names)
             vtk_scalar_field[l] = "hval_"*field_i
             vtk_scalar_data[l] = view(PostTend.h_distance, i, :)
         end
-        # Posterior differences
-        for (i, field_i) in enumerate(field_names)
-            l += 1
-            vtk_scalar_field[l] = "kval_"*field_i
-            vtk_scalar_data[l] = view(PostTend.k_metric, i, :)
-        end
+        # # Posterior differences -- deprecated by hval
+        # for (i, field_i) in enumerate(field_names)
+        #     l += 1
+        #     vtk_scalar_field[l] = "kval_"*field_i
+        #     vtk_scalar_data[l] = view(PostTend.k_metric, i, :)
+        # end
     end
 
 
@@ -480,9 +480,9 @@ function posterior_tendencies(query_points::Array{T,2}, markov_chains, nn_trees,
     return PostTend
 end
 
-function posterior_directional_tendencies(query_points::Array{T,2}, markov_chains, nn_trees, field_names;
+function posterior_directional_tendencies(query_points::Array{T,2}, markov_chains, nn_trees, field_names, priors;
     credible_level = 0.9, q_quantiles = [], mode_intervals = zeros(length(field_names)),
-    spherical_conversion = (a,b,c) -> (a,b,c), tf_global = true) where {T}
+    spherical_conversion = (a,b,c) -> (a,b,c), tf_global = true, tf_weighted_median = false) where {T}
     # Allocations
     num_fields, num_out, num_chains = size(nn_trees) # Number of fields, samples output per chain, and chains
     num_samples, num_pts = num_out*num_chains, size(query_points, 2) # Number of posterior samples and interpolation points
@@ -498,9 +498,10 @@ function posterior_directional_tendencies(query_points::Array{T,2}, markov_chain
         quantiles = zeros(num_quantiles, num_fields, num_pts),
         median_interval = zeros(2, num_fields, num_pts),
         low_high_interval = zeros(2, num_fields, num_pts),
-        highest_density_interval = zeros(2, num_fields, num_pts)
+        highest_density_interval = zeros(2, num_fields, num_pts),
+        h_distance = zeros(num_fields, num_pts)
     )
-
+    
     # Compute tendencies
     percent_done, print_interval = 0.1, 0.1 # For printing progress
     for j in 1:num_pts # Loop over interpolation points
@@ -519,14 +520,21 @@ function posterior_directional_tendencies(query_points::Array{T,2}, markov_chain
             PostTend.dist[i,j] = mean(d_i)
 
             s_i = @view post_samples[i,:]
-            PostTend.mean[i,j] = mean(s_i)
-            PostTend.median[i,j] = quantile(s_i, 0.5; sorted = true)
+            if tf_weighted_median && (i == 3) # Optional AniMag-weighted median for angular deviations
+                PostTend.mean[i,j] = mean(s_i, Weights(post_samples[1,:]))
+                PostTend.median[i,j] = median(s_i, Weights(post_samples[1,:])) # REQUIRES StatsBase
+            else
+                PostTend.mean[i,j] = mean(s_i)
+                PostTend.median[i,j] = quantile(s_i, 0.5; sorted = true)
+            end
             for (h, q_h) in enumerate(q_quantiles)
                 PostTend.quantiles[h,i,j] = quantile(s_i, q_h; sorted = true)
             end
             PostTend.median_interval[:,i,j] .= median_interval(s_i, credible_level; is_sorted = true)
             PostTend.low_high_interval[:,i,j] .= low_high_interval(s_i, credible_level; is_sorted = true)
             PostTend.highest_density_interval[:,i,j] .= highest_density_interval(s_i, credible_level; is_sorted = true)
+            # Quantify how much the posterior differs from the prior
+            PostTend.h_distance[i,j] = hellinger_distance!(s_i, priors[i]...; is_sorted = true)
             # Compute last because sample values are rounded in-place
             PostTend.mode[i,j] = binned_mode!(s_i; mode_interval = mode_intervals[i], is_sorted = true)
         end
@@ -577,7 +585,9 @@ function directional_posterior!(posterior_samples; spherical_conversion = (a,b,c
         u_norm = sqrt((u1^2) + (u2^2) + (u3^2))
         prj, puv = abs(u1*v1 + u2*v2 + u3*v3), u_norm*v_norm # Projection of sampled vectors onto principal orientation <--- Compute dlnVp correlation with this field???
         cos2Δ = puv > 0.0 ? 2.0*((prj/puv)^2) - 1.0 : 1.0 # Angular deviation with principal orientation; cos2Δ = 2.0*(cosΔ^2) - 1.0
-        prj = sqrt(prj) # Projected magnitude
+        cos2Δ = min(cos2Δ, 1.0) # Avoid floating point errors that cause subsequent acos call to fail
+        prj /= v_norm # Projected magnitude of u along axis defined by v, i.e., u⋅v/||v||...but ||v|| can approach 0
+        # prj = sqrt(prj) # Weighted magnitude estimates
         # Store result
         posterior_samples[2,j], posterior_samples[3,j] = prj, 0.5*acos(cos2Δ)
     end
@@ -811,13 +821,15 @@ function accumulate_directional_tensor!(tensor_sum, query_points, directional_fi
     Tree_2 = return_voronoi_tree(Model.fields[k_2])
     Tree_3 = return_voronoi_tree(Model.fields[k_3])
     # Accumulate tensor elements
-    cj, rj = [0], [0.0] # Allocate arrays to store nearest neighbor index and distance for small performance boost
-    for j = axes(query_points, 2)
+    # cj, rj = [0], [0.0] # Allocate arrays to store nearest neighbor index and distance for small performance boost
+    Threads.@threads for j = axes(query_points, 2)
+    # for j = axes(query_points, 2)
         xj = @view query_points[:, j]
         # Convert directional parameters to spherical
-        a_j = nearest_neighbor_value(xj, Model.fields[k_1], Tree_1; icell = cj, dist = rj)
-        b_j = nearest_neighbor_value(xj, Model.fields[k_2], Tree_2; icell = cj, dist = rj)
-        c_j = nearest_neighbor_value(xj, Model.fields[k_3], Tree_3; icell = cj, dist = rj)
+        # For threaded version, each call must allocate its own 1-element storage vectors
+        a_j = nearest_neighbor_value(xj, Model.fields[k_1], Tree_1) #; icell = cj, dist = rj)
+        b_j = nearest_neighbor_value(xj, Model.fields[k_2], Tree_2) #; icell = cj, dist = rj)
+        c_j = nearest_neighbor_value(xj, Model.fields[k_3], Tree_3) #; icell = cj, dist = rj)
         f_j, azm_j, elv_j = spherical_conversion(a_j, b_j, c_j)
         T = @view tensor_sum[:, :, j]
         sum_directional_tensor!(T, f_j, azm_j, elv_j)
@@ -838,13 +850,15 @@ function accumulate_directional_moments!(post_moments, directional_strength, ang
     Tree_2 = return_voronoi_tree(Model.fields[k_2])
     Tree_3 = return_voronoi_tree(Model.fields[k_3])
     # Accumulate elements
-    cj, rj = [0], [0.0] # Allocate arrays to store nearest neighbor index and distance for small performance boost
-    for j = axes(query_points, 2)
+    # cj, rj = [0], [0.0] # Allocate arrays to store nearest neighbor index and distance for small performance boost
+    Threads.@threads for j = axes(query_points, 2)
+    # for j = axes(query_points, 2)
         xj = @view query_points[:, j]
         # Convert directional parameters to spherical
-        a_j = nearest_neighbor_value(xj, Model.fields[k_1], Tree_1; icell = cj, dist = rj)
-        b_j = nearest_neighbor_value(xj, Model.fields[k_2], Tree_2; icell = cj, dist = rj)
-        c_j = nearest_neighbor_value(xj, Model.fields[k_3], Tree_3; icell = cj, dist = rj)
+        # For threaded version, each call must allocate its own 1-element storage vectors
+        a_j = nearest_neighbor_value(xj, Model.fields[k_1], Tree_1) #; icell = cj, dist = rj)
+        b_j = nearest_neighbor_value(xj, Model.fields[k_2], Tree_2) #; icell = cj, dist = rj)
+        c_j = nearest_neighbor_value(xj, Model.fields[k_3], Tree_3) #; icell = cj, dist = rj)
         f_j, azm_j, elv_j = spherical_conversion(a_j, b_j, c_j)
         # Directional vectors
         sinλ, cosλ = sincos(azm_j)
@@ -856,7 +870,8 @@ function accumulate_directional_moments!(post_moments, directional_strength, ang
         prj, puv0 = abs(u1*v1 + u2*v2 + u3*v3), u0*v0 # Unsigned dot-product
         cos2Δ = puv0 > 0.0 ? 2.0*((prj/puv0)^2) - 1.0 : 1.0 # Angular deviation with principal orientation; cos2Δ = 2.0*(cosΔ^2) - 1.0
         cos2Δ = min(cos2Δ, 1.0) # Avoid floating point errors that cause subsequent acos call to fail
-        prj = sqrt(prj) # Projected magnitude
+        prj /= v0 # Projected magnitude of u along axis defined by v, i.e., u⋅v/||v||...but ||v|| can approach 0
+        # prj = sqrt(prj) # Weighted magnitude estimates
         # Accumulate result
         for i in axes(post_moments, 1)
             post_moments[i,j,1] += (f_j^i)
@@ -873,13 +888,14 @@ function accumulate_directional_moments!(post_moments, directional_strength, ang
 end
 
 function accumulate_directional_correlation!(post_moments, post_correlation, directional_strength, query_points, correlation_fields, Model)
-    cj, rj = [0], [0.0] # Allocate arrays to store nearest neighbor index and distance for small performance boost
+    # cj, rj = [0], [0.0] # Allocate arrays to store nearest neighbor index and distance for small performance boost
     for (k, field_k) in enumerate(correlation_fields)
         fid = Model.fieldslist[field_k]
         Tree = return_voronoi_tree(Model.fields[fid])
-        for j = axes(query_points, 2)
+        Threads.@threads for j = axes(query_points, 2)
+        # for j = axes(query_points, 2)
             x_j = @view query_points[:, j]
-            v_j = nearest_neighbor_value(x_j, Model.fields[fid], Tree; icell = cj, dist = rj)
+            v_j = nearest_neighbor_value(x_j, Model.fields[fid], Tree) #; icell = cj, dist = rj)
             for i in axes(post_moments, 1)
                 post_moments[i, j, k] += (v_j^i)
             end
@@ -1003,7 +1019,8 @@ function kolmogorov_metric!(samples, a, b; is_sorted = false)
 end
 
 # Hellinger distance assuming a uniform prior
-function hellinger_distance!(samples, a, b; is_sorted = false)
+# Consider using ecdf from StatsBase instead of custom cdf estimation.
+function hellinger_distance!(samples, a::Number, b::Number; is_sorted = false)
     # Sort samples if necessary
     !is_sorted && sort!(samples)
 
@@ -1037,7 +1054,7 @@ end
 # cdf_u = (x; v_min = a, v_max = b) -> min(1.0, max(0.0, (x-v_min)/(v_max-v_min)))
 # cdf_n = (x; u = 0.0, sdev = σ) -> 0.5 + 0.5*erf((x-u)/(sqrt(2.0)*sdev))
 # dx = (b-a)/round(Int, sqrt(length(samples)))
-function hellinger_distance!(samples, dx::Float64, cdf::Function; is_sorted = false)
+function hellinger_distance!(samples, dx::Float64, cdf; is_sorted = false)
     # Bin probabilities
     # Uniform: (x; v_min = -0.1, v_max = 0.1) -> min(1.0, max(0.0, (x-v_min)/(v_max-v_min)))
     # Normal: (x; u = 0.0, sdev = 0.1) -> 0.5 + 0.5*erf((x-u)/(sqrt(2.0)*sdev))
@@ -1571,10 +1588,12 @@ function prior_directional_tensor(a, b, c; spherical_conversion = (a,b,c) -> (a,
         sinλ, cosλ = sincos(λ_i)
         sinϕ, cosϕ = sincos(ϕ_i)
         u1, u2, u3 = r_i*cosϕ*cosλ, r_i*cosϕ*sinλ, r_i*sinϕ
-        prj[i] = u1*v[1] + u2*v[2] + u3*v[3]
+        prj[i] = abs.(u1*v[1] + u2*v[2] + u3*v[3])
 
         ul = sqrt((u1^2) + (u2^2) + (u3^2))
         cosΔ[i] = prj[i]/(ul*vl) # cos2Δ = 2.0*(cosΔ^2) - 1.0
+        # prj[i] = sqrt.(prj[i])
+        prj[i] /= vl # Projection of u onto v
     end
 
     return db, λ1, λ2, λ3, T, prj, cosΔ
