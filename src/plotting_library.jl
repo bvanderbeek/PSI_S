@@ -4,7 +4,7 @@ include(@__DIR__() * "/dependencies.jl") # I live in the src directory
 using Plots
 
 # Plot evolution of all chains in a PSI_S inversion
-function plot_chain_metrics(parameter_file; istart = 1, tf_display_figures = false, tf_print = false)
+function plot_chain_metrics(parameter_file; istart = 1, tf_display_figures = false, tf_print = false, num_burn = 1)
     # Load parameter file
     P = TOML.parsefile(parameter_file)
     # Load chains
@@ -16,7 +16,13 @@ function plot_chain_metrics(parameter_file; istart = 1, tf_display_figures = fal
     # Print figures (hard-coded figure file names)
     tf_print && [png(h, chain_directory * "/" * fig_names[i] * "_i" * string(istart) * ".png") for (i, h) in enumerate(fig_array)]
 
-    return fig_array, fig_names
+    # Additional plots
+    print_path = chain_directory * "/hist_dimensions" * "_burn" * string(num_burn) * ".png"
+    plot_dimension_histograms(cm, num_burn; bi = 25, tf_display_figures = tf_display_figures, print_path = print_path)
+    print_path = chain_directory * "/hist_rms" * "_burn" * string(num_burn) * ".png"
+    plot_residual_histograms(cm, num_burn; tf_display_figures = tf_display_figures, tf_ms = true, print_path = print_path)
+
+    return cm, fig_array, fig_names
 end
 # Plot evolution of a collection of Markov chains
 function plot_chain_metrics(CM::Array{<:ChainMetrics, N};
@@ -124,4 +130,62 @@ function plot_data_array!(Fig, iterations, chain_metric;
         plot!(Fig, iterations, chain_metric[:,j], linecolor = field_colors[j], labels = chain_labels[j])
     end
     return Fig
+end
+
+function plot_dimension_histograms(CM::Array{<:ChainMetrics, N}, num_burn; bi = 25, tf_display_figures = true, print_path = nothing) where {N}
+    num_chains, num_out, num_flds = length(CM), length(CM[1].iteration), length(CM[1].fields)
+    num_samples = num_out - num_burn
+
+    # Collect cell numbers for each field
+    v = zeros(Int, num_chains*num_samples, num_flds)
+    for (i_chain, chain_i) in enumerate(CM)
+        ia = 1 + (i_chain - 1)*num_samples
+        ib = ia + num_samples - 1
+        for (_, j) in chain_i.fields
+            v[ia:ib,j] .= chain_i.num_cells[(num_burn+1):num_out,j]
+        end
+    end
+
+    pan = num_flds == 1 ? (1,1) : (ceil(Int, num_flds/2), 2)
+    h = plot(; layout = pan)
+    nmin, nmax = extrema(v)
+    nmin = bi*floor(Int, nmin/bi)
+    nmax = bi*ceil(Int, nmax/bi)
+    for (field_name, j) in CM[1].fields
+        histogram!(h,
+            v[:,j]; label = nothing, title = field_name, bins = nmin:bi:nmax,
+            normalize = :probability, seriesalpha = 0.5, subplot = j
+        )
+    end
+    tf_display_figures && display(h)
+    !isnothing(print_path) && png(h, print_path)
+    return h
+end
+
+function plot_residual_histograms(CM::Array{<:ChainMetrics, N}, num_burn; tf_display_figures = true, tf_ms = true, print_path = nothing) where {N}
+    num_chains, num_out, num_obs = length(CM), length(CM[1].iteration), size(CM[1].rrms,2)
+    num_samples = num_out - num_burn
+
+    v = zeros(num_chains*num_samples, num_obs)
+    for (i_chain, chain_i) in enumerate(CM)
+        ia = 1 + (i_chain - 1)*num_samples
+        ib = ia + num_samples - 1
+        for (j, _) in chain_i.obs
+            v[ia:ib,j] .= chain_i.rrms[(num_burn+1):num_out,j]
+        end
+    end
+    tf_ms && (v .*= 1000.0)
+
+    pan = num_obs == 1 ? (1,1) : (ceil(Int, num_obs/2), 2)
+    h = plot(; layout = pan)
+    for (j, field_name) in CM[1].obs
+        histogram!(h,
+            v[:,j]; label = nothing, title = field_name,
+            normalize = :probability, seriesalpha = 0.5, subplot = j
+        )
+    end
+    tf_display_figures && display(h)
+    !isnothing(print_path) && png(h, print_path)
+
+    return h
 end
