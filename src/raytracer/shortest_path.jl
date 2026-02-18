@@ -3,6 +3,26 @@ struct ShortestPathConst
     distance::Vector{Float64}
 end
 
+struct OutGridConst
+    x::Vector{Float64}
+    y::Vector{Float64}
+    z::Vector{Float64}
+    θ::Vector{Float64}
+    φ::Vector{Float64}
+    r::Vector{Float64}
+    Vp::Vector{Float64}
+    Vs::Vector{Float64}
+    # ε::Vector{Float64}
+    # δ::Vector{Float64}
+    # γ::Vector{Float64}
+    # n1::Vector{Float64}
+    # n2::Vector{Float64}
+    # n3::Vector{Float64}
+    fw_level::Int64
+    nnodes::Vector{Int64}
+    nxny::Int64
+end
+
 function tracing_vfield(Vp1D,Vs1D,gVp,gVs,vfields,active_fields)
     Vp = copy(Vp1D)
     Vs = copy(Vs1D)
@@ -12,6 +32,10 @@ function tracing_vfield(Vp1D,Vs1D,gVp,gVs,vfields,active_fields)
     if haskey(active_fields,"dlnVp") 
         dlnVp = vfields[active_fields["dlnVp"]]
         @. Vp = Vp * (1.0 + dlnVp)
+    end
+    if haskey(active_fields,"dlnSp") 
+        dlnSp = vfields[active_fields["dlnSp"]]
+        @. Vp = Vp / (1.0 + dlnSp)
     end
 
     if haskey(active_fields,"Vs") 
@@ -34,8 +58,8 @@ function tracing_vfield(Vp1D,Vs1D,gVp,gVs,vfields,active_fields)
         η = vfields[active_fields["η"]]
         @. Vs = Vs * (1.0 + dlnVp*η)
     end
-    @. gVp = gVp + Vp
-    @. gVs = gVs + Vs
+    @. gVp = gVp + 1/Vp # -- averaging slowness... (to make clearer!)
+    @. gVs = gVs + 1/Vs
 end
 
 function raytracing_dijkstra(gr, observables, LocalRaysManager, paths, evtsta, IP; firstcall=true, it=0, chains=Vector{Vector{ModelConst}}, aniso_status=false)
@@ -92,7 +116,7 @@ function raytracing_dijkstra(gr, observables, LocalRaysManager, paths, evtsta, I
         phase_visited = zeros(Bool,length(grid.x))
         if LocalRaysManager.carving
             rec_nodes = [LocalRaysManager.receiv_nodes[receiver] for receiver in receivers]
-            carve_grid(visited,grid,source_node,rec_nodes)
+            carve_grid(visited,grid,source_node,rec_nodes,IP)
         end
         for phase in phases 
             phase_visited .= visited
@@ -207,7 +231,7 @@ function fill_grid(grid, MarkovChains, evtsta, observables, IP; aniso_status = f
     points_radial = permutedims(hcat(grid.r))
     fieldslist = MarkovChains[begin][end].fieldslist
     nchains = length(MarkovChains)
-    tracing_fields = ["Vp","dlnVp","Vs","dlnVs","Vp2Vs","dlnVp2Vs","η"]
+    tracing_fields = ["Vp","dlnVp","dlnSp","Vs","dlnVs","Vp2Vs","dlnVp2Vs","η"]
     active_fields = Dict{String,Int64}()
     vfields = Vector{Vector{Float64}}()
     for fieldname in fieldslist
@@ -267,8 +291,8 @@ function fill_grid(grid, MarkovChains, evtsta, observables, IP; aniso_status = f
             tracing_vfield(Vp1D, Vs1D, grid.Vp, grid.Vs, vfields, active_fields)
         end
     end
-    @. grid.Vp = grid.Vp / nsamples
-    @. grid.Vs = grid.Vs / nsamples
+    @. grid.Vp = 1 / (grid.Vp / nsamples)   # -- calculated from average slowness (stored in gr.Vp / samples)
+    @. grid.Vs = 1 / (grid.Vs / nsamples)
     # -- anisotropic ray-tracing --
     if aniso_status
         aniso_fields(grid,MarkovChains,IP,IP.MCS)
@@ -280,10 +304,30 @@ function fill_grid(grid, MarkovChains, evtsta, observables, IP; aniso_status = f
         @. grid.sstatics[iobs] = grid.sstatics[iobs] / nsamples
     end
     print("\nnoise: ",grid.σ)
+
+    # -- save grid
+outgrid = OutGridConst(
+    grid.x,
+    grid.y,
+    grid.z,
+    grid.θ,
+    grid.φ,
+    grid.r,
+    grid.Vp,
+    grid.Vs,
+    # grid.ε,
+    # grid.δ,
+    # grid.n1,
+    # grid.n2,
+    # grid.n3,
+    grid.fw_level,
+    grid.nnodes,
+    grid.nnodes[1]*grid.nnodes[2]
+)
+save("grid_model.jld","grid",outgrid)
 end
 
 function fill_4Dgrid(grid, MarkovChains, IP)
-    nsamples = 0
     points = permutedims(hcat(grid.x, grid.y, grid.z, ones(length(grid.x))*0.0))
     points_radial = permutedims(hcat(grid.r, ones(length(grid.x))*0.0))
     fieldslist = MarkovChains[begin][end].fieldslist
@@ -303,6 +347,7 @@ function fill_4Dgrid(grid, MarkovChains, IP)
         Vp1D, Vs1D = copy(grid.Vp[frame]), copy(grid.Vs[frame])
         grid.Vp[frame] .= 0.0
         grid.Vs[frame] .= 0.0
+        nsamples = 0
         for chain in eachindex(MarkovChains)
             [(vfields[i] .= 0.0) for i in eachindex(vfields)]
             MarkovChain = MarkovChains[chain]
@@ -342,8 +387,8 @@ function fill_4Dgrid(grid, MarkovChains, IP)
             end
             tracing_vfield(Vp1D, Vs1D, grid.Vp[frame], grid.Vs[frame], vfields, active_fields)
         end
-        @. grid.Vp[frame] = grid.Vp[frame] / nsamples
-        @. grid.Vs[frame] = grid.Vs[frame] / nsamples
+        @. grid.Vp[frame] = 1 / (grid.Vp[frame] / nsamples)   # -- calculated from average slowness (stored in gr.Vp / samples)
+        @. grid.Vs[frame] = 1 / (grid.Vs[frame] / nsamples)
     end
 end
 
@@ -382,7 +427,7 @@ function aniso_fields(grid,MarkovChains,IP,MCS)
     [push!(T,zeros(Float64,3,3)) for i in eachindex(grid.x)]
     for chain in eachindex(MarkovChains)
         MarkovChain = MarkovChains[chain]
-        for model in MarkovChain[end:-5:end-chain_models+1]
+        for model in MarkovChain[end:end]#[end:-5:end-chain_models+1]
             nsamples += 1
             for i in eachindex(model.fields)
                 voronoi = model.fields[i]
@@ -390,21 +435,25 @@ function aniso_fields(grid,MarkovChains,IP,MCS)
                 if fieldname == "ε"
                     ε_map .= 0.0
                     inds = NN_interpolation(points, voronoi.c[:,begin:voronoi.n[1]])
-                    [ε_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    # [ε_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    @. ε_map = voronoi.v[inds]
                     δ_map .= ε_map
                     # @. δ_map = ε_map*(p1*ε_map + p2)/(ε_map + q1)
                 elseif fieldname == "δ"
                     δ_map .= 0.0
                     inds = NN_interpolation(points, voronoi.c[:,begin:voronoi.n[1]])
-                    [δ_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    # [δ_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    @. δ_map = voronoi.v[inds]
                 elseif fieldname == "𝛙"
                     𝛙_map .= 0.0
                     inds = NN_interpolation(points, voronoi.c[:,begin:voronoi.n[1]])
-                    [𝛙_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    # [𝛙_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    @. 𝛙_map = voronoi.v[inds]
                 elseif fieldname == "v3"
                     v3_map .= 0.0
                     inds = NN_interpolation(points, voronoi.c[:,begin:voronoi.n[1]])
-                    [v3_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    # [v3_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    @. v3_map = voronoi.v[inds]
                 end
             end
             [updateT(T[i],6.0,0.0,ε_map[i],δ_map[i],𝛙_map[i],v3_map[i]) for i in eachindex(grid.x)]
@@ -432,7 +481,7 @@ function aniso_fields(grid,MarkovChains,IP,MCS)
         grid.n3[i] = b[3]/nb
 
         grid.ε[i] = sqrt(b[1]^2+b[2]^2+b[3]^2)
-        # grid.δ[i] = grid.ε[i]
+        #grid.δ[i] = grid.ε[i]
         grid.δ[i] = grid.ε[i]*(p1*grid.ε[i] + p2)/(grid.ε[i] + q1)
         if crit < DB_th
             grid.ε[i] = 0.0
@@ -450,7 +499,7 @@ function aniso_fields(grid,MarkovChains,IP,MCS)
     nsamples = 0
     for chain in eachindex(MarkovChains)
         MarkovChain = MarkovChains[chain]
-        for model in MarkovChain[end:-5:end-chain_models+1]
+        for model in MarkovChain[end:end]#[end:-5:end-chain_models+1]
             nsamples += 1
             for i in eachindex(model.fields)
                 voronoi = model.fields[i]
@@ -458,19 +507,23 @@ function aniso_fields(grid,MarkovChains,IP,MCS)
                 if fieldname == "ε"
                     ε_map .= 0.0
                     inds = NN_interpolation(points, voronoi.c[:,begin:voronoi.n[1]])
-                    [ε_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    # [ε_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    @. ε_map = voronoi.v[inds]
                 elseif fieldname == "δ"
                     δ_map .= 0.0
                     inds = NN_interpolation(points, voronoi.c[:,begin:voronoi.n[1]])
-                    [δ_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    # [δ_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    @. δ_map = voronoi.v[inds]
                 elseif fieldname == "𝛙"
                     𝛙_map .= 0.0
                     inds = NN_interpolation(points, voronoi.c[:,begin:voronoi.n[1]])
-                    [𝛙_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    # [𝛙_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    @. 𝛙_map = voronoi.v[inds]
                 elseif fieldname == "v3"
                     v3_map .= 0.0
                     inds = NN_interpolation(points, voronoi.c[:,begin:voronoi.n[1]])
-                    [v3_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    # [v3_map[i] = voronoi.v[inds[i]] for i in eachindex(inds)]
+                    @. v3_map = voronoi.v[inds]
                 end
             end
             for i in eachindex(grid.ε)
@@ -486,9 +539,9 @@ function aniso_fields(grid,MarkovChains,IP,MCS)
     @. grid.ε = grid.ε / nsamples
     #@. grid.δ = grid.δ / nsamples
     # -- elliptical anisotropy
-    @. grid.δ = grid.ε
+    #@. grid.δ = grid.ε
     # -- low-aspect ratio (100) cracks anisotropy
-    # @. grid.δ = grid.ε*(p1*grid.ε + p2)/(grid.ε + q1)
+     @. grid.δ = grid.ε*(p1*grid.ε + p2)/(grid.ε + q1)
 
     return true
 
