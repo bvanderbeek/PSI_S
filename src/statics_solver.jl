@@ -49,9 +49,11 @@ function static_generalized_inverse(IP,observables;up_σ=false,σss=Float64[])
                 Is[station_static_id,station_static_id] = (1.0/IP.SC.ss_uncertainty*noise_estimate)^2
                 staid2st[end][obs.staids[obs.obs2sta[i]]] = station_static_id
             end
-            push!(Id,i+obs_progression)
-            push!(Jd,i+obs_progression)
-            push!(Vd,1/(noise_estimate)^2)
+            if e_flag || s_flag
+                push!(Id,i+obs_progression)
+                push!(Jd,i+obs_progression)
+                push!(Vd,1/(noise_estimate)^2)
+            end
         end
         e_flag && (statics_progression += length(obs.evtids))
         s_flag && (statics_progression += length(obs.staids))
